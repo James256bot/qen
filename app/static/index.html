@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QEN — Quantum Equation Nexus</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
+  header { padding: 16px 20px; border-bottom: 1px solid #21262d; }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  h1 span { color: #58a6ff; }
+  main { max-width: 780px; margin: 0 auto; padding: 20px; }
+  .row { display: grid; gap: 12px; margin-bottom: 14px; }
+  label { font-size: 13px; color: #8b949e; display: block; margin-bottom: 4px; }
+  select, input[type=number] { width: 100%; padding: 10px; font-size: 15px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; }
+  button { width: 100%; padding: 12px; font-size: 15px; font-weight: 600; background: #238636; color: white; border: 0; border-radius: 6px; cursor: pointer; }
+  button:disabled { background: #30363d; cursor: not-allowed; }
+  canvas { width: 100%; height: 260px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-top: 12px; }
+  .meta { font-size: 12px; color: #8b949e; margin-top: 8px; font-family: ui-monospace, monospace; }
+  details { margin-top: 16px; }
+  summary { cursor: pointer; font-size: 13px; color: #8b949e; }
+  pre { background: #161b22; padding: 12px; border-radius: 6px; font-size: 11px; overflow-x: auto; }
+  .err { color: #f85149; font-size: 13px; margin-top: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; margin-top: 8px; color: #8b949e; }
+.legend span { display: inline-flex; align-items: center; gap: 4px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+  .pill { display: inline-block; padding: 2px 8px; background: #21262d; border-radius: 10px; font-size: 11px; color: #8b949e; margin-right: 6px; }
+</style>
+</head>
+<body>
+<header><h1>QEN <span>·</span> Quantum Equation Nexus</h1></header>
+<main>
+  <div class="row">
+    <div>
+      <label for="system">system</label>
+      <select id="system">
+        <option value="particle">particle in a box</option>
+        <option value="hydrogen">hydrogen atom</option>
+        <option value="n2">N₂ molecule</option>
+      </select>
+    </div>
+  </div>
+  <div class="row" id="params"></div>
+  <button id="run">run simulation</button>
+<button id="csv" style="background:#21262d; margin-top:8px;">download CSV</button>
+  <div class="err" id="err"></div>
+  <canvas id="plot" width="800" height="260"></canvas>
+<div class="legend" id="legend"></div>
+  <div class="meta" id="meta"></div>
+  <details>
+    <summary>raw response</summary>
+    <pre id="raw"></pre>
+  </details>
+</main>
+<script>
+const PARAMS = {
+  particle: [
+    { name: "L_nm",   label: "well width L (nm)", value: 2.0,  step: 0.1, min: 0.5, max: 10 },
+    { name: "n_states", label: "n states",        value: 5,    step: 1,   min: 1,   max: 10 },
+  ],
+  hydrogen: [
+    { name: "Z",     label: "atomic number Z",  value: 1, step: 1, min: 1, max: 10 },
+    { name: "n_max", label: "max n",            value: 4, step: 1, min: 1, max: 8 },
+  ],
+  n2: [
+    { name: "n_points", label: "curve points", value: 200, step: 50, min: 50, max: 1000 },
+  ],
+};
+
+const $sys = document.getElementById("system");
+const $params = document.getElementById("params");
+const $run = document.getElementById("run");
+const $csv = document.getElementById("csv");
+let lastResult = null;
+const $err = document.getElementById("err");
+const $meta = document.getElementById("meta");
+const $raw = document.getElementById("raw");
+const canvas = document.getElementById("plot");
+const $legend = document.getElementById("legend");
+const ctx = canvas.getContext("2d");
+
+
+function loadFromURL() {
+  const q = new URLSearchParams(location.search);
+  const sys = q.get("system");
+  if (sys && PARAMS[sys]) {
+    $sys.value = sys;
+    renderParams();
+    for (const p of PARAMS[sys]) {
+      const v = q.get(p.name);
+      if (v !== null) {
+        const el = document.getElementById(`p_${p.name}`);
+        if (el) el.value = v;
+      }
+    }
+  }
+}
+
+function saveToURL() {
+  const q = new URLSearchParams();
+  q.set("system", $sys.value);
+  const params = collectParams();
+  for (const k in params) q.set(k, params[k]);
+  history.replaceState(null, "", "?" + q.toString());
+}
+
+function renderParams() {
+  const sys = $sys.value;
+  $params.innerHTML = "";
+  for (const p of PARAMS[sys]) {
+    const div = document.createElement("div");
+    div.innerHTML = `<label for="p_${p.name}">${p.label}</label>` +
+      `<input id="p_${p.name}" type="number" value="${p.value}" step="${p.step}" min="${p.min}" max="${p.max}">`;
+    $params.appendChild(div);
+  }
+}
+
+function collectParams() {
+  const out = {};
+  for (const p of PARAMS[$sys.value]) {
+    const el = document.getElementById(`p_${p.name}`);
+    let v = el.value;
+    if (v === "" || isNaN(v)) v = p.value;
+    const num = p.step === 1 ? parseInt(v, 10) : parseFloat(v);
+    const clamped = Math.max(p.min, Math.min(p.max, num));
+    out[p.name] = clamped;
+  }
+  return out;
+}
+
+function clearCanvas() {
+  ctx.fillStyle = "#161b22";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if ($legend) $legend.innerHTML = "";
+}
+
+
+function drawAxes(xmin, xmax, xlabel, ymin, ymax, ylabel) {
+  const W = canvas.width, H = canvas.height, pad = 50;
+  ctx.strokeStyle = "#30363d"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, 10); ctx.lineTo(pad, H-30); ctx.lineTo(W-10, H-30);
+  ctx.stroke();
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.fillStyle = "#8b949e";
+
+  // X ticks
+  const nx = 5;
+  for (let i = 0; i <= nx; i++) {
+    const v = xmin + (xmax-xmin)*i/nx;
+    const x = pad + (W-pad-10)*i/nx;
+    ctx.beginPath(); ctx.moveTo(x, H-30); ctx.lineTo(x, H-25); ctx.stroke();
+    const label = v.toFixed(2);
+    const w = ctx.measureText(label).width;
+    ctx.fillText(label, x - w/2, H-12);
+  }
+  ctx.fillText(xlabel, W-70, H-12);
+
+  // Y ticks
+  const ny = 4;
+  for (let i = 0; i <= ny; i++) {
+    const v = ymin + (ymax-ymin)*i/ny;
+    const y = (H-30) - (H-40)*i/ny;
+    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(pad-5, y); ctx.stroke();
+    const label = v.toFixed(2);
+    const w = ctx.measureText(label).width;
+    ctx.fillText(label, pad - 8 - w, y + 3);
+  }
+  ctx.save();
+  ctx.translate(12, H/2);
+  ctx.rotate(-Math.PI/2);
+  ctx.fillText(ylabel, -ctx.measureText(ylabel).width/2, 0);
+  ctx.restore();
+}
+
+function drawParticle(result) {
+  const xs = result.x_nm, psi = result.wavefunctions, E = result.energies_eV;
+  const W = canvas.width, H = canvas.height, pad = 40;
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  let ymax = 0;
+  for (const w of psi) for (const v of w) ymax = Math.max(ymax, v*v);
+  const colors = ["#58a6ff", "#3fb950", "#d29922", "#f85149", "#a371f7", "#39c5cf", "#db6d28", "#8b949e", "#ec8cb0", "#79c0ff"];
+  drawAxes(xmin, xmax, "x (nm)", 0, ymax, "|ψ|²");
+  for (let n = 0; n < psi.length; n++) {
+    ctx.strokeStyle = colors[n % colors.length];
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < xs.length; i++) {
+      const x = pad + (xs[i]-xmin)/(xmax-xmin)*(W-pad-10);
+      const y = (H-30) - (psi[n][i]*psi[n][i]/ymax)*(H-40);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  $legend.innerHTML = "";
+  for (let n = 0; n < psi.length; n++) {
+    const el = document.createElement("span");
+    el.innerHTML = `<i style="background:${colors[n % colors.length]}"></i>n=${n+1} · ${E[n].toFixed(4)} eV`;
+    $legend.appendChild(el);
+  }
+  return `${psi.length} states  ·  E₁ = ${E[0].toFixed(4)} eV  ·  x range ${xmin.toFixed(3)}–${xmax.toFixed(3)} nm`;
+}
+
+function drawHydrogen(result) {
+  const W = canvas.width, H = canvas.height, pad = 50;
+  const lv = result.levels;
+  const Emin = Math.min(...lv.map(l => l.energy_eV));
+  drawAxes(0, lv.length, "n index", Emin, 0, "E (eV)");
+  ctx.textBaseline = "middle";
+  for (const L of lv) {
+    const y = 20 + (L.energy_eV/Emin)*(H-60);
+    ctx.strokeStyle = "#58a6ff";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(pad + 4, y); ctx.lineTo(W - 20, y); ctx.stroke();
+
+    const label = `n=${L.n}  ${L.energy_eV.toFixed(3)} eV  deg ${L.degeneracy}`;
+    ctx.font = "11px ui-monospace, monospace";
+    const tw = ctx.measureText(label).width;
+    const lx = pad + 20;
+    const ly = Math.max(15, Math.min(H - 40, y - 10));
+
+    // pill background
+    ctx.fillStyle = "#0d1117";
+    ctx.fillRect(lx - 4, ly - 9, tw + 8, 18);
+
+    // text
+    ctx.fillStyle = "#e6edf3";
+    ctx.fillText(label, lx, ly);
+  }
+  ctx.textBaseline = "alphabetic";
+  return `${lv.length} levels  ·  E₁ = ${lv[0].energy_eV.toFixed(4)} eV`;
+}
+
+function drawN2(result) {
+  const W = canvas.width, H = canvas.height, pad = 50;
+  const c = result.curve;
+  const rmin = c[0].R_nm, rmax = c[c.length-1].R_nm;
+  const emin = Math.min(...c.map(p => p.bond_energy_eV));
+  const emax = Math.max(...c.map(p => p.bond_energy_eV));
+  drawAxes(rmin, rmax, "R (nm)", emin, emax, "bond E (eV)");
+  ctx.strokeStyle = "#3fb950"; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < c.length; i++) {
+    const x = pad + (c[i].R_nm-rmin)/(rmax-rmin)*(W-pad-10);
+    const y = (H-30) - (c[i].bond_energy_eV-emin)/(emax-emin+1e-9)*(H-50);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  return `${c.length} points  ·  De = ${result.De_eV} eV  ·  Re = ${result.Re_nm} nm`;
+}
+
+function draw(result) {
+  clearCanvas();
+  if (result.wavefunctions) return drawParticle(result);
+  if (result.levels) return drawHydrogen(result);
+  if (result.curve) return drawN2(result);
+  return "no renderer for this result shape";
+}
+
+
+function toCSV(result) {
+  if (result.wavefunctions) {
+    const xs = result.x_nm, psi = result.wavefunctions;
+    const header = ["x_nm"].concat(psi.map((_, i) => `psi_${i+1}`));
+    const rows = xs.map((x, i) => [x].concat(psi.map(w => w[i])));
+    return header.join(",") + "\n" + rows.map(r => r.join(",")).join("\n");
+  }
+  if (result.levels) {
+    const header = ["n", "energy_eV", "energy_J", "degeneracy"];
+    const rows = result.levels.map(l => [l.n, l.energy_eV, l.energy_J, l.degeneracy]);
+    return header.join(",") + "\n" + rows.map(r => r.join(",")).join("\n");
+  }
+  if (result.curve) {
+    const header = ["R_nm", "bond_energy_eV", "total_energy_eV"];
+    const rows = result.curve.map(c => [c.R_nm, c.bond_energy_eV, c.total_energy_eV]);
+    return header.join(",") + "\n" + rows.map(r => r.join(",")).join("\n");
+  }
+  return null;
+}
+
+$csv.addEventListener("click", () => {
+  if (!lastResult) return;
+  const csv = toCSV(lastResult);
+  if (!csv) { $err.textContent = "no CSV export for this result"; return; }
+  const blob = new Blob([csv], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `qen_${$sys.value}_${Date.now()}.csv`;
+  a.click();
+});
+
+async function runSim() {
+  $err.textContent = "";
+  $run.disabled = true;
+  $run.textContent = "running…";
+  try {
+    const body = { system_type: $sys.value, parameters: collectParams() };
+    if ($sys.value === "particle") body.parameters.return_wavefunctions = true;
+    const t0 = performance.now();
+    const res = await fetch("/simulations/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    lastResult = data.result;
+    if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+    const wall = (performance.now() - t0).toFixed(1);
+    const line = draw(data.result);
+    $meta.textContent = `id ${data.id.slice(0,8)}  ·  server ${data.compute_time_ms.toFixed(1)} ms  ·  wall ${wall} ms  ·  ${line}`;
+    $raw.textContent = JSON.stringify(data, null, 2);
+    saveToURL();
+  } catch (e) {
+    $err.textContent = "error: " + e.message;
+  } finally {
+    $run.disabled = false;
+    $run.textContent = "run simulation";
+  }
+}
+
+$sys.addEventListener("change", renderParams);
+$run.addEventListener("click", runSim);
+loadFromURL();
+renderParams();
+clearCanvas();
+runSim();
+</script>
+</body>
+</html>
