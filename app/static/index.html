@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>QEN — Quantum Equation Nexus</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -23,6 +27,23 @@
   summary { cursor: pointer; font-size: 13px; color: #8b949e; }
   pre { background: #161b22; padding: 12px; border-radius: 6px; font-size: 11px; overflow-x: auto; }
   .err { color: #f85149; font-size: 13px; margin-top: 8px; }
+.hrow { display: grid; grid-template-columns: 100px 1fr 80px; gap: 8px; padding: 4px 0; border-bottom: 1px solid #21262d; }
+.hrow a { color: #58a6ff; text-decoration: none; }
+.hrow a:hover { text-decoration: underline; }
+.pal-btn { background:#21262d; color:#e6edf3; border:1px solid #30363d; border-radius:4px; padding:6px 12px; font-size:12px; cursor:pointer; font-family:ui-monospace,monospace; }
+.pal-btn.active { background:#1f6feb; border-color:#58a6ff; }
+.pal-btn:hover { border-color:#58a6ff; }
+.egrid-row { display:flex; gap:4px; align-items:center; }
+.egrid-label { width:32px; font-size:11px; color:#8b949e; font-family:ui-monospace,monospace; }
+.egrid-cell { width:34px; height:28px; background:#0d1117; border:1px solid #21262d; border-radius:3px; display:flex; align-items:center; justify-content:center; font-family:ui-monospace,monospace; font-size:10px; cursor:pointer; color:#e6edf3; }
+.egrid-cell:hover { border-color:#58a6ff; }
+.egrid-cell.occupied { background:#21262d; }
+.egrid-cell.ctrl { background:#1f6feb33; border-color:#58a6ff; }
+.egrid-cell.targ { background:#a371f733; border-color:#a371f7; }
+.egrid-cell.q0 { background:#58a6ff22; }
+.egrid-cell.q1 { background:#3fb95022; }
+.egrid-cell.q2 { background:#d2992222; }
+
 .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; margin-top: 8px; color: #8b949e; }
 .legend span { display: inline-flex; align-items: center; gap: 4px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
@@ -36,22 +57,62 @@
     <div>
       <label for="system">system</label>
       <select id="system">
-        <option value="particle">particle in a box</option>
+        <option value="particle">particle in a box (1D)</option>
+        <option value="oscillator">harmonic oscillator</option>
+        <option value="finite_well">finite square well</option>
+        <option value="box2d">2D box (degeneracy)</option>
+        <option value="box3d">3D box (cubic shells)</option>
         <option value="hydrogen">hydrogen atom</option>
         <option value="n2">N₂ molecule</option>
+        <option value="evolve">time evolution (animated)</option>
+        <option value="lattice2d">2D quantum lattice (video)</option>
+        <option value="circuit">quantum circuit</option>
+        <option value="vqe_h2">VQE for H₂</option>
+        <option value="qpe">quantum phase estimation</option>
+        <option value="vmc">VMC (Hubbard, Mott)</option>
+        <option value="dft">DFT (1D density functional)</option>
       </select>
     </div>
   </div>
   <div class="row" id="params"></div>
   <button id="run">run simulation</button>
+<label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:13px; color:#8b949e;">
+  <input type="checkbox" id="live"> live update (drag a slider to re-run instantly)
+</label>
 <button id="csv" style="background:#21262d; margin-top:8px;">download CSV</button>
+<button id="permalink" style="background:#21262d; margin-top:8px;">copy permalink</button>
   <div class="err" id="err"></div>
-  <canvas id="plot" width="800" height="260"></canvas>
+  <div style="display:flex; gap:8px;">
+  <canvas id="plot" width="800" height="260" style="flex:1;"></canvas>
+  <canvas id="bloch" width="220" height="260" style="display:none; background:#161b22; border:1px solid #30363d; border-radius:6px;"></canvas>
+</div>
+<div id="editorPanel" style="display:none; margin-top:14px; padding:12px; background:#161b22; border:1px solid #30363d; border-radius:6px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+    <div style="font-size:12px; color:#8b949e;">circuit editor — pick a gate, then click a cell</div>
+    <div>
+      <button id="editorClear" style="background:#21262d; padding:4px 10px; font-size:11px; width:auto;">clear</button>
+      <button id="editorRun" style="background:#238636; padding:4px 10px; font-size:11px; width:auto; margin-left:6px;">run editor circuit</button>
+    </div>
+  </div>
+  <div id="editorPalette" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>
+  <div id="editorGrid" style="display:flex; flex-direction:column; gap:4px;"></div>
+  <div id="editorStatus" style="margin-top:10px; font-size:11px; color:#8b949e;"></div>
+</div>
+<div id="anim" style="display:none; margin-top:10px;">
+  <button id="playBtn" style="width:80px; padding:8px; display:inline-block; background:#21262d;">▶ play</button>
+  <button id="gifBtn" style="width:120px; padding:8px; display:inline-block; background:#21262d; margin-left:6px;">save GIF</button>
+  <input id="scrub" type="range" min="0" max="0" value="0" step="1" style="width:60%; padding:0; vertical-align:middle;">
+  <span id="frameInfo" style="font-size:12px; color:#8b949e; margin-left:8px;"></span>
+</div>
 <div class="legend" id="legend"></div>
   <div class="meta" id="meta"></div>
   <details>
     <summary>raw response</summary>
     <pre id="raw"></pre>
+  </details>
+  <details open>
+    <summary>recent runs</summary>
+    <div id="history" style="font-size:12px; font-family:ui-monospace,monospace; color:#8b949e; padding:8px 0;"></div>
   </details>
 </main>
 <script>
@@ -67,20 +128,136 @@ const PARAMS = {
   n2: [
     { name: "n_points", label: "curve points", value: 200, step: 50, min: 50, max: 1000 },
   ],
+  oscillator: [
+    { name: "omega_eV", label: "ℏω (eV)",   value: 1.0, step: 0.1, min: 0.01, max: 10 },
+    { name: "n_max",    label: "n states",   value: 5,   step: 1,   min: 1,    max: 20 },
+  ],
+  finite_well: [
+    { name: "V0_eV",         label: "well depth V₀ (eV)", value: 10.0, step: 1,   min: 0.1, max: 100 },
+    { name: "well_width_nm", label: "well width (nm)",    value: 1.0,  step: 0.1, min: 0.1, max: 5 },
+    { name: "n_states",      label: "n states",           value: 5,    step: 1,   min: 1,   max: 15 },
+  ],
+  box2d: [
+    { name: "Lx_nm",     label: "Lx (nm)",   value: 2.0, step: 0.1, min: 0.5, max: 10 },
+    { name: "Ly_nm",     label: "Ly (nm)",   value: 2.0, step: 0.1, min: 0.5, max: 10 },
+    { name: "n_max_each", label: "n_max",     value: 3,   step: 1,   min: 1,   max: 8 },
+  ],
+  box3d: [
+    { name: "Lx_nm",     label: "Lx (nm)",   value: 2.0, step: 0.1, min: 0.5, max: 10 },
+    { name: "Ly_nm",     label: "Ly (nm)",   value: 2.0, step: 0.1, min: 0.5, max: 10 },
+    { name: "Lz_nm",     label: "Lz (nm)",   value: 2.0, step: 0.1, min: 0.5, max: 10 },
+    { name: "n_max_each", label: "n_max",     value: 2,   step: 1,   min: 1,   max: 5 },
+  ],
+  circuit: [
+    { name: "circuit_name", label: "circuit", value: "bell", type: "select", options: ["bell", "ghz3", "ghz5", "superposition", "qft2", "grover2"] },
+    { name: "shots",        label: "shots (0 = no sampling)", value: 1000, step: 100, min: 0, max: 100000 },
+    { name: "entangle_q0",  label: "measure entanglement of q0? (0 or 1)", value: 1, step: 1, min: 0, max: 1 },
+    { name: "bloch_q0",     label: "show Bloch sphere for q0? (0 or 1)", value: 1, step: 1, min: 0, max: 1 },
+    { name: "noise_type", label: "noise type", value: "none", type: "select",
+      options: ["none", "depolarizing", "amplitude_damping", "dephasing"] },
+    { name: "noise_rate", label: "noise rate (0-1)", value: 0.1, step: 0.05, min: 0, max: 1 },
+    { name: "noise_qubits", label: "noisy qubits (comma-separated, e.g. 0,1)", value: "all", type: "text" },
+    { name: "open_editor", label: "open circuit editor? (0 or 1)", value: 0, step: 1, min: 0, max: 1 },
+  ],
+  vqe_h2: [
+    { name: "R_angstrom", label: "H–H distance (Å)", value: 0.735, step: 0.05, min: 0.3, max: 5.0 },
+    { name: "n_layers",   label: "ansatz layers",    value: 2,     step: 1,    min: 1,   max: 4 },
+    { name: "max_iter",   label: "max iterations",   value: 400,   step: 50,   min: 50,  max: 2000 },
+  ],
+  qpe: [
+    { name: "phi",        label: "phase φ (0 to 1)",  value: 0.125, step: 0.001, min: 0, max: 0.9999 },
+    { name: "n_ancilla",  label: "ancilla qubits",     value: 5,     step: 1,     min: 2, max: 12 },
+    { name: "shots",      label: "shots (0 = exact)",  value: 0,     step: 100,   min: 0, max: 100000 },
+  ],
+  lattice2d: [
+    { name: "Nx",          label: "lattice width Nx",   value: 30,   step: 5,    min: 10,  max: 100 },
+    { name: "Ny",          label: "lattice height Ny",  value: 30,   step: 5,    min: 10,  max: 100 },
+    { name: "x0_frac",     label: "start x (fraction)", value: 0.25, step: 0.05, min: 0.05, max: 0.95 },
+    { name: "y0_frac",     label: "start y (fraction)", value: 0.50, step: 0.05, min: 0.05, max: 0.95 },
+    { name: "sigma_frac",  label: "packet width",       value: 0.08, step: 0.01, min: 0.02, max: 0.20 },
+    { name: "t_x",         label: "hopping t_x",        value: 1.0,  step: 0.1,  min: 0.1, max: 3.0 },
+    { name: "t_y",         label: "hopping t_y",        value: 1.0,  step: 0.1,  min: 0.1, max: 3.0 },
+    { name: "B",           label: "magnetic flux B",    value: 0.0,  step: 0.05, min: 0.0, max: 1.0 },
+    { name: "disorder_W",  label: "disorder W",         value: 0.0,  step: 0.5,  min: 0.0, max: 5.0 },
+    { name: "barrier_V0",  label: "barrier V₀",         value: 0.0,  step: 0.5,  min: 0.0, max: 5.0 },
+    { name: "n_frames",    label: "frames",             value: 40,   step: 5,    min: 10,  max: 120 },
+    { name: "tau_max",     label: "total time τ",       value: 15,   step: 1,    min: 2,   max: 60 },
+  ],
+  vmc: [
+    { name: "Nx",       label: "chain length Nx",     value: 6,   step: 1,  min: 2,  max: 16 },
+    { name: "Ny",       label: "lattice height Ny",   value: 1,   step: 1,  min: 1,  max: 4 },
+    { name: "U",        label: "interaction U/t",     value: 4.0, step: 0.5, min: 0, max: 20 },
+    { name: "fill",     label: "electrons per site (0.2-1.0)", value: 0.5, step: 0.1, min: 0.2, max: 1.0 },
+    { name: "sweep",    label: "sweep U? (0 or 1)",   value: 1,   step: 1,  min: 0,  max: 1 },
+    { name: "n_samples",label: "Monte Carlo samples (capped at 500 for sweep)", value: 4000,step: 1000,min: 1000,max: 20000 },
+  ],
+  dft: [
+    { name: "N",           label: "grid points",          value: 150,  step: 10, min: 50,  max: 400 },
+    { name: "L",           label: "domain length",        value: 15.0, step: 1,  min: 5,   max: 40 },
+    { name: "n_electrons", label: "number of electrons",  value: 2,    step: 1,  min: 1,   max: 8 },
+    { name: "potential",   label: "external potential (harmonic, double_well, step, flat)", value: "harmonic", type: "select",
+      options: ["harmonic", "double_well", "step", "flat"] },
+    { name: "xc_alpha",    label: "exchange strength α",  value: 0.5,  step: 0.1, min: 0.0, max: 1.5 },
+    { name: "xc_beta",     label: "correlation β",        value: 0.05, step: 0.01,min: 0.0, max: 0.3 },
+  ],
+  evolve: [
+    { name: "L_nm",       label: "box width L (nm)",  value: 2.0,  step: 0.1, min: 0.5, max: 10 },
+    { name: "n_states",   label: "n eigenstates",     value: 20,   step: 1,   min: 5,   max: 40 },
+    { name: "x0_frac",    label: "packet center (0-1)", value: 0.3, step: 0.05, min: 0.05, max: 0.95 },
+    { name: "sigma_frac", label: "packet width (0-1)", value: 0.03, step: 0.01, min: 0.01, max: 0.2 },
+    { name: "t_max_fs",   label: "t_max (fs)",        value: 200,  step: 10,  min: 20,  max: 2000 },
+    { name: "n_frames",   label: "frames",            value: 40,   step: 5,   min: 10,  max: 120 },
+  ],
 };
 
 const $sys = document.getElementById("system");
 const $params = document.getElementById("params");
 const $run = document.getElementById("run");
 const $csv = document.getElementById("csv");
+const $permalink = document.getElementById("permalink");
+const $live = document.getElementById("live");
+let ws = null;
+let wsPending = false;
+let wsLastParams = null;
 let lastResult = null;
+let lastRunId = null;
+let lastCircuitSpec = null;
 const $err = document.getElementById("err");
 const $meta = document.getElementById("meta");
 const $raw = document.getElementById("raw");
 const canvas = document.getElementById("plot");
 const $legend = document.getElementById("legend");
+const $history = document.getElementById("history");
 const ctx = canvas.getContext("2d");
 
+
+async function loadRunFromURL() {
+  const q = new URLSearchParams(location.search);
+  const runId = q.get("run");
+  if (!runId) return false;
+  try {
+    const res = await fetch(`/runs/${runId}`);
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (PARAMS[data.system_type]) {
+      $sys.value = data.system_type;
+      renderParams();
+      for (const p of PARAMS[data.system_type]) {
+        const el = document.getElementById(`p_${p.name}`);
+        if (el && data.parameters[p.name] !== undefined) el.value = data.parameters[p.name];
+      }
+    }
+    lastResult = data.result;
+    lastRunId = data.id;
+    refreshHistory();
+    const line = draw(data.result);
+    $meta.textContent = `id ${data.id.slice(0,8)}  ·  server ${data.compute_time_ms.toFixed(1)} ms  ·  ${line}`;
+    $raw.textContent = JSON.stringify(data, null, 2);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 function loadFromURL() {
   const q = new URLSearchParams(location.search);
@@ -103,6 +280,7 @@ function saveToURL() {
   q.set("system", $sys.value);
   const params = collectParams();
   for (const k in params) q.set(k, params[k]);
+  if (lastRunId) q.set("run", lastRunId);
   history.replaceState(null, "", "?" + q.toString());
 }
 
@@ -111,8 +289,17 @@ function renderParams() {
   $params.innerHTML = "";
   for (const p of PARAMS[sys]) {
     const div = document.createElement("div");
-    div.innerHTML = `<label for="p_${p.name}">${p.label}</label>` +
-      `<input id="p_${p.name}" type="number" value="${p.value}" step="${p.step}" min="${p.min}" max="${p.max}">`;
+    if (p.type === "select") {
+      const opts = p.options.map(o => `<option value="${o}"${o === p.value ? " selected" : ""}>${o}</option>`).join("");
+      div.innerHTML = `<label for="p_${p.name}">${p.label}</label>` +
+        `<select id="p_${p.name}">${opts}</select>`;
+    } else if (p.type === "text") {
+      div.innerHTML = `<label for="p_${p.name}">${p.label}</label>` +
+        `<input id="p_${p.name}" type="text" value="${p.value}">`;
+    } else {
+      div.innerHTML = `<label for="p_${p.name}">${p.label}</label>` +
+        `<input id="p_${p.name}" type="number" value="${p.value}" step="${p.step}" min="${p.min}" max="${p.max}">`;
+    }
     $params.appendChild(div);
   }
 }
@@ -122,15 +309,20 @@ function collectParams() {
   for (const p of PARAMS[$sys.value]) {
     const el = document.getElementById(`p_${p.name}`);
     let v = el.value;
-    if (v === "" || isNaN(v)) v = p.value;
-    const num = p.step === 1 ? parseInt(v, 10) : parseFloat(v);
-    const clamped = Math.max(p.min, Math.min(p.max, num));
-    out[p.name] = clamped;
+    if (p.type === "text" || p.type === "select") {
+      out[p.name] = v;
+    } else {
+      if (v === "" || isNaN(v)) v = p.value;
+      const num = p.step === 1 ? parseInt(v, 10) : parseFloat(v);
+      const clamped = Math.max(p.min, Math.min(p.max, num));
+      out[p.name] = clamped;
+    }
   }
   return out;
 }
 
 function clearCanvas() {
+  if (typeof clearBloch === "function") clearBloch();
   ctx.fillStyle = "#161b22";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if ($legend) $legend.innerHTML = "";
@@ -251,16 +443,1043 @@ function drawN2(result) {
   return `${c.length} points  ·  De = ${result.De_eV} eV  ·  Re = ${result.Re_nm} nm`;
 }
 
+
+// ---------- oscillator ----------
+function drawOscillator(result) {
+  const xs = result.x_nm, psi = result.wavefunctions, E = result.levels.map(l => l.energy_eV);
+  const W = canvas.width, H = canvas.height, pad = 50;
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  let ymax = 0;
+  for (const w of psi) for (const v of w) ymax = Math.max(ymax, v*v);
+  const colors = ["#58a6ff", "#3fb950", "#d29922", "#f85149", "#a371f7", "#39c5cf", "#db6d28", "#8b949e", "#ec8cb0", "#79c0ff"];
+  drawAxes(xmin, xmax, "x (nm)", 0, ymax, "|ψ|²");
+  for (let n = 0; n < psi.length; n++) {
+    ctx.strokeStyle = colors[n % colors.length];
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < xs.length; i++) {
+      const x = pad + (xs[i]-xmin)/(xmax-xmin)*(W-pad-10);
+      const y = (H-30) - (psi[n][i]*psi[n][i]/ymax)*(H-40);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  $legend.innerHTML = "";
+  for (let n = 0; n < psi.length && n < 8; n++) {
+    const el = document.createElement("span");
+    el.innerHTML = `<i style="background:${colors[n % colors.length]}"></i>n=${n} · ${E[n].toFixed(3)} eV`;
+    $legend.appendChild(el);
+  }
+  return `${psi.length} states  ·  ℏω = ${result.omega_eV} eV  ·  x₀ = ${result.x0_nm.toFixed(3)} nm`;
+}
+
+// ---------- finite well ----------
+function drawFiniteWell(result) {
+  const xs = result.x_nm, psi = result.wavefunctions, V = result.potential_eV, E = result.energies_eV;
+  const W = canvas.width, H = canvas.height, pad = 50;
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const Vmin = Math.min(...V), Vmax = 0;
+  const Emin = Math.min(E[0], Vmin * 1.05);
+  const ymin = Emin * 1.1, ymax = Vmax * 0.5;
+  drawAxes(xmin, xmax, "x (nm)", ymin, ymax, "E (eV)");
+  // fill the potential well as a grey shape
+  ctx.fillStyle = "#21262d";
+  ctx.beginPath();
+  ctx.moveTo(pad, (H-30) - (0 - ymin)/(ymax-ymin)*(H-40));
+  for (let i = 0; i < xs.length; i++) {
+    const x = pad + (xs[i]-xmin)/(xmax-xmin)*(W-pad-10);
+    const y = (H-30) - (V[i] - ymin)/(ymax-ymin)*(H-40);
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(W-10, (H-30) - (0 - ymin)/(ymax-ymin)*(H-40));
+  ctx.lineTo(W-10, H-30);
+  ctx.lineTo(pad, H-30);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "#30363d"; ctx.stroke();
+  // draw bound states as horizontal lines + ψ overlaid
+  const colors = ["#58a6ff", "#3fb950", "#d29922", "#f85149", "#a371f7", "#39c5cf", "#db6d28"];
+  for (let n = 0; n < psi.length; n++) {
+    const En = E[n];
+    const yE = (H-30) - (En - ymin)/(ymax-ymin)*(H-40);
+    ctx.strokeStyle = colors[n % colors.length];
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(pad, yE); ctx.lineTo(W-10, yE); ctx.stroke();
+    // overlay ψ on the level
+    let psiMax = 0;
+    for (const v of psi[n]) psiMax = Math.max(psiMax, Math.abs(v));
+    const scale = 0.8 * (En === 0 ? 1 : Math.abs(En)) / (psiMax || 1);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < xs.length; i++) {
+      const x = pad + (xs[i]-xmin)/(xmax-xmin)*(W-pad-10);
+      const y = yE - psi[n][i] * scale * (H-40)/(ymax-ymin);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.fillStyle = "#e6edf3";
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText(`n=${n} ${En.toFixed(3)} eV`, pad+8, yE - 6);
+  }
+  $legend.innerHTML = "";
+  return `V₀=${result.V0_eV} eV  ·  width=${result.well_width_nm} nm  ·  ${result.n_bound_states} bound  ·  threshold ${result.bound_state_threshold_eV.toFixed(3)} eV`;
+}
+
+// ---------- box2d / box3d ----------
+function drawBox(result, dim) {
+  const lv = result.levels;
+  const W = canvas.width, H = canvas.height, pad = 50;
+  const Emax = Math.min(lv[lv.length-1].energy_eV, 6.0);
+  drawAxes(0, 1, "", 0, Emax, "E (eV)");
+  ctx.textBaseline = "middle";
+  for (let i = 0; i < lv.length; i++) {
+    const L = lv[i];
+    if (L.energy_eV > Emax) break;
+    const y = (H-30) - (L.energy_eV/Emax)*(H-40);
+    ctx.strokeStyle = "#58a6ff";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(pad + 10, y); ctx.lineTo(W - 30, y); ctx.stroke();
+    const qs = L.quanta.slice(0,4).map(q => {
+      if (dim === 3) return `(${q.nx},${q.ny},${q.nz})`;
+      return `(${q.nx},${q.ny})`;
+    }).join(" ");
+    const extra = L.quanta.length > 4 ? ` … +${L.quanta.length-4}` : "";
+    const label = `E=${L.energy_eV.toFixed(3)} eV   deg=${L.degeneracy}   ${qs}${extra}`;
+    ctx.font = "11px ui-monospace, monospace";
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = "#0d1117";
+    ctx.fillRect(pad + 20 - 4, y - 9, tw + 8, 18);
+    ctx.fillStyle = "#e6edf3";
+    ctx.fillText(label, pad + 20, y);
+  }
+  ctx.textBaseline = "alphabetic";
+  $legend.innerHTML = "";
+  return `${lv.length} levels  ·  ${dim}D box  ·  degeneracies visible`;
+}
+
+// ---------- evolve (animated) ----------
+let evolveFrames = null;
+let evolveX = null;
+let evolveCurrentFrame = 0;
+let evolvePlaying = false;
+let evolveTimer = null;
+
+function drawEvolveFrame(idx) {
+  if (!evolveFrames || !evolveX) return;
+  const frame = evolveFrames[idx];
+  const W = canvas.width, H = canvas.height, pad = 50;
+  const xs = evolveX, xmin = Math.min(...xs), xmax = Math.max(...xs);
+  let ymax = 0;
+  for (const f of evolveFrames) for (const v of f.prob_density) ymax = Math.max(ymax, v);
+  drawAxes(xmin, xmax, "x (nm)", 0, ymax, "|ψ|²");
+  // filled area under |ψ|²
+  ctx.fillStyle = "rgba(88, 166, 255, 0.25)";
+  ctx.strokeStyle = "#58a6ff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(pad, H-30);
+  for (let i = 0; i < xs.length; i++) {
+    const x = pad + (xs[i]-xmin)/(xmax-xmin)*(W-pad-10);
+    const y = (H-30) - (frame.prob_density[i]/ymax)*(H-40);
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(W-10, H-30);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  document.getElementById("frameInfo").textContent = `frame ${idx+1}/${evolveFrames.length}  ·  t = ${frame.t_fs.toFixed(1)} fs`;
+  document.getElementById("scrub").value = idx;
+}
+
+function drawEvolve(result) {
+  evolveFrames = result.frames;
+  evolveX = result.x_nm;
+  evolveCurrentFrame = 0;
+  document.getElementById("anim").style.display = "block";
+  document.getElementById("scrub").max = evolveFrames.length - 1;
+  document.getElementById("scrub").value = 0;
+  drawEvolveFrame(0);
+  $legend.innerHTML = "";
+  return `${result.n_states} eigenstates  ·  ${result.frames.length} frames  ·  t_max ${result.t_max_fs} fs  ·  prob=${result.total_prob_from_expansion.toFixed(3)}`;
+}
+
+
+const blochCanvas = document.getElementById("bloch");
+const bctx = blochCanvas ? blochCanvas.getContext("2d") : null;
+
+function drawBlochSphere(vectors) {
+  if (!bctx || !vectors || !vectors.length) return;
+  blochCanvas.style.display = "block";
+  const W = blochCanvas.width, H = blochCanvas.height;
+  const cx = W/2, cy = H/2 + 10;
+  const R = Math.min(W, H) * 0.35;
+
+  bctx.fillStyle = "#161b22";
+  bctx.fillRect(0, 0, W, H);
+
+  // sphere outline
+  bctx.strokeStyle = "#30363d";
+  bctx.lineWidth = 1.5;
+  bctx.beginPath();
+  bctx.arc(cx, cy, R, 0, 2*Math.PI);
+  bctx.stroke();
+
+  // equator (dashed)
+  bctx.strokeStyle = "#21262d";
+  bctx.setLineDash([3, 3]);
+  bctx.beginPath();
+  bctx.ellipse(cx, cy, R, R * 0.3, 0, 0, 2*Math.PI);
+  bctx.stroke();
+  bctx.setLineDash([]);
+
+  // axes: X (right), Y (into screen -> drawn diagonally), Z (up)
+  // We use a simple projection: 3D (x,y,z) -> screen (cx + x*R, cy - z*R) with a slight y-tilt
+  const proj = (x, y, z) => [
+    cx + (x - 0.4 * y) * R,
+    cy - (z + 0.25 * y) * R * 0.9,
+  ];
+
+  bctx.strokeStyle = "#8b949e";
+  bctx.lineWidth = 1;
+  // X axis
+  let [ax, ay] = proj(-1.2, 0, 0);
+  let [bx, by] = proj(1.2, 0, 0);
+  bctx.beginPath(); bctx.moveTo(ax, ay); bctx.lineTo(bx, by); bctx.stroke();
+  // Y axis
+  [ax, ay] = proj(0, -1.2, 0);
+  [bx, by] = proj(0, 1.2, 0);
+  bctx.beginPath(); bctx.moveTo(ax, ay); bctx.lineTo(bx, by); bctx.stroke();
+  // Z axis
+  [ax, ay] = proj(0, 0, -1.2);
+  [bx, by] = proj(0, 0, 1.2);
+  bctx.beginPath(); bctx.moveTo(ax, ay); bctx.lineTo(bx, by); bctx.stroke();
+
+  // axis labels
+  bctx.fillStyle = "#8b949e";
+  bctx.font = "10px ui-monospace, monospace";
+  [bx, by] = proj(1.25, 0, 0); bctx.fillText("X", bx, by);
+  [bx, by] = proj(0, 1.25, 0); bctx.fillText("Y", bx, by);
+  [bx, by] = proj(0, 0, 1.25); bctx.fillText("Z", bx, by);
+
+  // |0> and |1> labels
+  [bx, by] = proj(0, 0, 1.1);
+  bctx.fillStyle = "#58a6ff"; bctx.fillText("|0>", bx + 4, by);
+  [bx, by] = proj(0, 0, -1.1);
+  bctx.fillStyle = "#58a6ff"; bctx.fillText("|1>", bx + 4, by);
+
+  // Draw each Bloch vector as an arrow from center
+  const colors = ["#58a6ff", "#3fb950", "#d29922", "#f85149"];
+  vectors.forEach((v, i) => {
+    const [px, py] = proj(v.x, v.y, v.z);
+    const color = colors[i % colors.length];
+
+    // line from center
+    bctx.strokeStyle = color;
+    bctx.lineWidth = 2;
+    bctx.beginPath();
+    bctx.moveTo(cx, cy);
+    bctx.lineTo(px, py);
+    bctx.stroke();
+
+    // head dot
+    bctx.fillStyle = color;
+    bctx.beginPath();
+    bctx.arc(px, py, 5, 0, 2*Math.PI);
+    bctx.fill();
+
+    // label
+    bctx.fillStyle = "#e6edf3";
+    bctx.font = "10px ui-monospace, monospace";
+    bctx.fillText("q" + v.qubit, px + 8, py + 4);
+  });
+
+  // title
+  bctx.fillStyle = "#8b949e";
+  bctx.font = "11px ui-monospace, monospace";
+  bctx.fillText("Bloch sphere", 8, 16);
+}
+
+function clearBloch() {
+  if (!bctx) return;
+  blochCanvas.style.display = "none";
+  bctx.clearRect(0, 0, blochCanvas.width, blochCanvas.height);
+}
+
+
+// ============================================================
+// VQE for H2 — convergence plot
+// ============================================================
+
+function drawVQE(result) {
+  const W = canvas.width, H = canvas.height, pad = 60;
+  const hist = result.energy_history || [];
+  const exact = result.exact_energy_hartree;
+  const Emin = Math.min(...hist, exact);
+  const Emax = Math.max(...hist, exact);
+  const yspan = (Emax - Emin) || 1;
+  const N = hist.length;
+
+  // axes
+  ctx.strokeStyle = "#30363d"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, 10);
+  ctx.lineTo(pad, H - 30);
+  ctx.lineTo(W - 10, H - 30);
+  ctx.stroke();
+
+  // labels
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.fillText("E (Hartree)", 8, 20);
+  ctx.fillText("iteration", W - 70, H - 12);
+
+  // y axis ticks
+  const ny = 4;
+  for (let i = 0; i <= ny; i++) {
+    const E = Emin + (Emax - Emin) * i / ny;
+    const y = (H - 30) - ((E - Emin) / yspan) * (H - 40);
+    ctx.strokeStyle = "#21262d";
+    ctx.beginPath();
+    ctx.moveTo(pad - 4, y);
+    ctx.lineTo(W - 10, y);
+    ctx.stroke();
+    ctx.fillStyle = "#8b949e";
+    ctx.fillText(E.toFixed(4), pad - 46, y + 3);
+  }
+
+  // exact energy line (dashed)
+  const yExact = (H - 30) - ((exact - Emin) / yspan) * (H - 40);
+  ctx.strokeStyle = "#f85149";
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(pad, yExact);
+  ctx.lineTo(W - 10, yExact);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#f85149";
+  ctx.fillText("exact", W - 50, yExact - 4);
+
+  // convergence curve
+  ctx.strokeStyle = "#58a6ff";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < N; i++) {
+    const x = pad + (i / Math.max(N - 1, 1)) * (W - pad - 10);
+    const y = (H - 30) - ((hist[i] - Emin) / yspan) * (H - 40);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // final point marker
+  const lastE = hist[N - 1];
+  const yEnd = (H - 30) - ((lastE - Emin) / yspan) * (H - 40);
+  ctx.fillStyle = "#3fb950";
+  ctx.beginPath();
+  ctx.arc(W - 10 - 4, yEnd, 5, 0, 2 * Math.PI);
+  ctx.fill();
+
+  $legend.innerHTML = "";
+  const el = document.createElement("span");
+  el.innerHTML = `<i style="background:#58a6ff"></i>VQE = ${result.energy_hartree.toFixed(6)} Ha`;
+  $legend.appendChild(el);
+  const el2 = document.createElement("span");
+  el2.innerHTML = `<i style="background:#f85149"></i>exact FCI = ${exact.toFixed(6)} Ha`;
+  $legend.appendChild(el2);
+  const el3 = document.createElement("span");
+  el3.innerHTML = `<i style="background:#3fb950"></i>error = ${result.error_kcal_per_mol.toFixed(4)} kcal/mol`;
+  $legend.appendChild(el3);
+
+  return `H₂  ·  R = ${result.R_angstrom} Å  ·  ${result.n_layers} layers  ·  ${result.iterations} iterations  ·  error ${result.error_kcal_per_mol.toFixed(4)} kcal/mol`;
+}
+
+
+// ============================================================
+// QPE — phase distribution histogram
+// ============================================================
+
+function drawQPE(result) {
+  const W = canvas.width, H = canvas.height, pad = 60;
+  const probs = result.probabilities;
+  const n = result.n_ancilla;
+  const peak = result.most_likely_outcome;
+  const phi = result.phase_estimate;
+
+  // Trim to a window around the peak for legibility
+  const half = Math.min(32, probs.length);
+  const lo = Math.max(0, peak - half);
+  const hi = Math.min(probs.length, peak + half);
+  const windowed = probs.slice(lo, hi);
+  const pmax = Math.max(...probs, 0.01);
+
+  // axes
+  ctx.strokeStyle = "#30363d"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, 10);
+  ctx.lineTo(pad, H - 40);
+  ctx.lineTo(W - 10, H - 40);
+  ctx.stroke();
+
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.fillText("P(outcome)", 8, 20);
+  ctx.fillText("phase φ (binary outcome)", W - 200, H - 12);
+
+  // y-axis ticks
+  const ny = 4;
+  for (let i = 0; i <= ny; i++) {
+    const y = (H - 40) - (i / ny) * (H - 55);
+    const v = (pmax * i / ny);
+    ctx.strokeStyle = "#21262d";
+    ctx.beginPath();
+    ctx.moveTo(pad - 4, y);
+    ctx.lineTo(W - 10, y);
+    ctx.stroke();
+    ctx.fillStyle = "#8b949e";
+    ctx.fillText(v.toFixed(3), pad - 48, y + 3);
+  }
+
+  // bars
+  const barW = (W - pad - 20) / windowed.length;
+  for (let i = 0; i < windowed.length; i++) {
+    const idx = lo + i;
+    const p = probs[idx];
+    const x = pad + i * barW + barW * 0.1;
+    const y = (H - 40) - (p / pmax) * (H - 55);
+    const bh = (H - 40) - y;
+    // highlight peak
+    ctx.fillStyle = (idx === peak) ? "#3fb950" : "#58a6ff";
+    ctx.fillRect(x, y, barW * 0.8, bh);
+  }
+
+  // annotate peak
+  const peakIdx = peak - lo;
+  const peakX = pad + peakIdx * barW + barW * 0.5;
+  ctx.strokeStyle = "#3fb950"; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(peakX, (H - 40) - (probs[peak] / pmax) * (H - 55) - 8);
+  ctx.lineTo(peakX, 15);
+  ctx.stroke();
+  ctx.fillStyle = "#3fb950";
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.fillText(`peak: |${result.binary_string}> = ${phi.toFixed(4)}`, peakX + 6, 22);
+
+  $legend.innerHTML = "";
+  const el = document.createElement("span");
+  el.innerHTML = `<i style="background:#3fb950"></i>|${result.binary_string}⟩ = ${phi.toFixed(4)}  (P = ${probs[peak].toFixed(4)})`;
+  $legend.appendChild(el);
+  const el2 = document.createElement("span");
+  el2.innerHTML = `${n} ancillas  ·  ${probs.length} outcomes`;
+  $legend.appendChild(el2);
+
+  let extra = `${n} ancillas  ·  ${probs.length} outcomes`;
+  if (result.shots) extra += `  ·  ${result.shots} shots`;
+  return extra;
+}
+
+
+// ============================================================
+// 2D quantum lattice — heatmap renderer + animation
+// ============================================================
+
+let latticeFrames = null;
+let latticeNx = 0, latticeNy = 0;
+let latticeCurrentFrame = 0;
+let latticePlaying = false;
+let latticeTimer = null;
+
+function colorForProbability(p, pmax) {
+  // Map p/pmax in [0,1] to a blue -> white color map
+  const v = Math.min(1, p / pmax);
+  // Blend from dark background (#161b22) to bright cyan (#58a6ff) to white
+  const r1 = 0x16, g1 = 0x1b, b1 = 0x22;
+  const r2 = 0x58, g2 = 0xa6, b2 = 0xff;
+  const r3 = 0xff, g3 = 0xff, b3 = 0xff;
+  let r, g, b;
+  if (v < 0.5) {
+    const t = v / 0.5;
+    r = Math.round(r1 + t * (r2 - r1));
+    g = Math.round(g1 + t * (g2 - g1));
+    b = Math.round(b1 + t * (b2 - b1));
+  } else {
+    const t = (v - 0.5) / 0.5;
+    r = Math.round(r2 + t * (r3 - r2));
+    g = Math.round(g2 + t * (g3 - g2));
+    b = Math.round(b2 + t * (b3 - b2));
+  }
+  return `rgb(${r},${g},${b})`;
+}
+
+function drawLatticeFrame(idx) {
+  if (!latticeFrames || !latticeFrames.length) return;
+  const frame = latticeFrames[idx];
+  const prob = frame.prob;
+  const W = canvas.width, H = canvas.height, pad = 40;
+  const plotW = W - 2 * pad;
+  const plotH = H - 2 * pad;
+
+  // clear
+  ctx.fillStyle = "#161b22";
+  ctx.fillRect(0, 0, W, H);
+
+  // find max for scaling
+  let pmax = 0;
+  for (let i = 0; i < latticeNx; i++) {
+    for (let j = 0; j < latticeNy; j++) {
+      if (prob[i][j] > pmax) pmax = prob[i][j];
+    }
+  }
+  if (pmax <= 0) pmax = 1;
+
+  // draw cells
+  const cw = plotW / latticeNx;
+  const ch = plotH / latticeNy;
+  for (let i = 0; i < latticeNx; i++) {
+    for (let j = 0; j < latticeNy; j++) {
+      const x = pad + j * cw;
+      const y = pad + i * ch;
+      ctx.fillStyle = colorForProbability(prob[i][j], pmax);
+      ctx.fillRect(x, y, cw + 0.5, ch + 0.5);
+    }
+  }
+
+  // border
+  ctx.strokeStyle = "#30363d";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(pad, pad, plotW, plotH);
+
+  // labels
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.fillText(`frame ${idx + 1}/${latticeFrames.length}`, pad, 20);
+  ctx.fillText(`τ = ${frame.tau.toFixed(2)}`, W - 120, 20);
+  ctx.fillText(`${latticeNx} × ${latticeNy}`, W - 120, 34);
+
+  // scrubber info
+  const $info = document.getElementById("frameInfo");
+  if ($info) {
+    $info.textContent = `frame ${idx + 1}/${latticeFrames.length}  ·  τ = ${frame.tau.toFixed(2)}`;
+  }
+  const $scrub = document.getElementById("scrub");
+  if ($scrub) $scrub.value = idx;
+}
+
+function drawLattice(result) {
+  latticeFrames = result.frames;
+  latticeNx = result.Nx;
+  latticeNy = result.Ny;
+  latticeCurrentFrame = 0;
+
+  const anim = document.getElementById("anim");
+  if (anim) anim.style.display = "block";
+  const $scrub = document.getElementById("scrub");
+  if ($scrub) {
+    $scrub.max = latticeFrames.length - 1;
+    $scrub.value = 0;
+  }
+
+  drawLatticeFrame(0);
+  $legend.innerHTML = "";
+  const active = [];
+  if (result.t_x !== 1.0 || result.t_y !== 1.0) active.push(`t_x=${result.t_x},t_y=${result.t_y}`);
+  if (result.B > 0) active.push(`B=${result.B}`);
+  if (result.disorder_W > 0) active.push(`W=${result.disorder_W}`);
+  if (result.barrier_V0 > 0) active.push(`V₀=${result.barrier_V0}`);
+  const suffix = active.length ? "  ·  " + active.join("  ·  ") : "";
+  return `${latticeNx}×${latticeNy}  ·  ${latticeFrames.length} frames  ·  τ_max = ${result.tau_max}${suffix}`;
+}
+
+
+// ============================================================
+// VMC for the Hubbard model — Mott transition curve
+// ============================================================
+
+function drawVMC(result) {
+  const W = canvas.width, H = canvas.height, pad = 60;
+  const N = result.N;
+  const sweep = result.sweep || [];
+
+  if (sweep.length < 2) {
+    // single-point mode: text only
+    ctx.fillStyle = "#161b22";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#e6edf3";
+    ctx.font = "14px ui-monospace, monospace";
+    ctx.fillText(`VMC for the ${result.Nx}×${result.Ny} Hubbard model`, pad, 40);
+    ctx.font = "12px ui-monospace, monospace";
+    ctx.fillStyle = "#8b949e";
+    const lines = [
+      `U/t = ${result.U}`,
+      `N_up = ${result.N_up}, N_dn = ${result.N_dn}, N = ${result.N}`,
+      `energy = ${result.energy.toFixed(4)} ± ${result.energy_stderr.toFixed(4)}`,
+      `energy per site = ${result.energy_per_site.toFixed(4)}`,
+      `optimal g = ${result.optimal_g.toFixed(3)}`,
+      `Monte Carlo samples = ${result.n_samples}`,
+    ];
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], pad, 70 + i * 22);
+    }
+    $legend.innerHTML = "";
+    return `${result.Nx}×${result.Ny}  ·  U/t = ${result.U}  ·  E/site = ${result.energy_per_site.toFixed(4)}  ·  g = ${result.optimal_g.toFixed(3)}`;
+  }
+
+  // sweep mode: plot E/site vs U and g_opt vs U
+  const Us = sweep.map(s => s.U);
+  const Es = sweep.map(s => s.energy_per_site);
+  const gs = sweep.map(s => s.optimal_g);
+  const Umin = Math.min(...Us), Umax = Math.max(...Us);
+  const Emin = Math.min(...Es), Emax = Math.max(...Es);
+  const Espread = Emax - Emin || 1;
+
+  // clear
+  ctx.fillStyle = "#161b22";
+  ctx.fillRect(0, 0, W, H);
+
+  // axes
+  ctx.strokeStyle = "#30363d"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, 10);
+  ctx.lineTo(pad, H - 30);
+  ctx.lineTo(W - 10, H - 30);
+  ctx.stroke();
+
+  // labels
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.fillText("E/site (Hartree-like)", 8, 20);
+  ctx.fillText("U/t", W - 40, H - 12);
+
+  // y-axis ticks
+  for (let i = 0; i <= 4; i++) {
+    const y = (H - 30) - (i / 4) * (H - 45);
+    const v = Emin + (Espread * i / 4);
+    ctx.strokeStyle = "#21262d";
+    ctx.beginPath();
+    ctx.moveTo(pad - 4, y);
+    ctx.lineTo(W - 10, y);
+    ctx.stroke();
+    ctx.fillStyle = "#8b949e";
+    ctx.fillText(v.toFixed(3), pad - 48, y + 3);
+  }
+
+  // x-axis ticks
+  for (let i = 0; i <= 4; i++) {
+    const x = pad + (i / 4) * (W - pad - 20);
+    const v = Umin + (Umax - Umin) * i / 4;
+    ctx.fillStyle = "#8b949e";
+    ctx.fillText(v.toFixed(1), x - 8, H - 12);
+  }
+
+  // E/site curve
+  ctx.strokeStyle = "#58a6ff"; ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i < sweep.length; i++) {
+    const x = pad + (Us[i] - Umin) / (Umax - Umin || 1) * (W - pad - 20);
+    const y = (H - 30) - (Es[i] - Emin) / Espread * (H - 45);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // data points with error bars
+  for (let i = 0; i < sweep.length; i++) {
+    const x = pad + (Us[i] - Umin) / (Umax - Umin || 1) * (W - pad - 20);
+    const y = (H - 30) - (Es[i] - Emin) / Espread * (H - 45);
+    // error bar
+    const err = sweep[i].energy_stderr || 0;
+    const ey = err / Espread * (H - 45);
+    ctx.strokeStyle = "#58a6ff";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y - ey);
+    ctx.lineTo(x, y + ey);
+    ctx.moveTo(x - 5, y - ey);
+    ctx.lineTo(x + 5, y - ey);
+    ctx.moveTo(x - 5, y + ey);
+    ctx.lineTo(x + 5, y + ey);
+    ctx.stroke();
+    // data point
+    ctx.fillStyle = "#58a6ff";
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  // g_opt curve on the same plot, scaled to [0, 1]
+  ctx.strokeStyle = "#3fb950"; ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  for (let i = 0; i < sweep.length; i++) {
+    const x = pad + (Us[i] - Umin) / (Umax - Umin || 1) * (W - pad - 20);
+    const y = (H - 30) - gs[i] * (H - 45);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // legend
+  $legend.innerHTML = "";
+  const el = document.createElement("span");
+  el.innerHTML = `<i style="background:#58a6ff"></i>E/site`;
+  $legend.appendChild(el);
+  const el2 = document.createElement("span");
+  el2.innerHTML = `<i style="background:#3fb950"></i>g_opt (correlation)`;
+  $legend.appendChild(el2);
+  const el3 = document.createElement("span");
+  el3.textContent = `${N} sites  ·  ${sweep.length} U points  ·  ${result.n_samples} samples each`;
+  $legend.appendChild(el3);
+
+  return `${result.Nx}×${result.Ny} Hubbard  ·  U/t = ${Umin.toFixed(1)} to ${Umax.toFixed(1)}  ·  ${sweep.length} points`;
+}
+
+
+// ============================================================
+// 1D DFT — density, potential, and Kohn-Sham orbitals
+// ============================================================
+
+function drawDFT(result) {
+  const W = canvas.width, H = canvas.height, pad = 50;
+  const x = result.x;
+  const n = result.density;
+  const V = result.total_potential;
+  const orbitals = result.orbitals;
+
+  // clear
+  ctx.fillStyle = "#161b22";
+  ctx.fillRect(0, 0, W, H);
+
+  // scale: density on the left axis (0 to n_max), potential on the same axis
+  const n_max = Math.max(...n);
+  const V_min = Math.min(...V);
+  const V_max = Math.max(...V);
+
+  // use a shared y-axis range that covers both density and potential
+  const y_min = Math.min(V_min, 0);
+  const y_max = Math.max(V_max, n_max * 1.2);
+
+  const xmin = x[0], xmax = x[x.length - 1];
+
+  // draw axes
+  ctx.strokeStyle = "#30363d";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, 10);
+  ctx.lineTo(pad, H - 30);
+  ctx.lineTo(W - 10, H - 30);
+  ctx.stroke();
+
+  // labels
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.fillText("n(x), V(x)", 8, 20);
+  ctx.fillText("x (bohr)", W - 50, H - 12);
+
+  // gridlines at y = 0
+  const y0 = (H - 30) - (0 - y_min) / (y_max - y_min) * (H - 40);
+  ctx.strokeStyle = "#21262d";
+  ctx.beginPath();
+  ctx.moveTo(pad, y0);
+  ctx.lineTo(W - 10, y0);
+  ctx.stroke();
+  ctx.fillStyle = "#8b949e";
+  ctx.fillText("0", pad - 20, y0 + 3);
+
+  // density as filled area (blue)
+  ctx.fillStyle = "rgba(88, 166, 255, 0.35)";
+  ctx.strokeStyle = "#58a6ff";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(pad, y0);
+  for (let i = 0; i < x.length; i++) {
+    const px = pad + (x[i] - xmin) / (xmax - xmin) * (W - pad - 10);
+    const py = (H - 30) - (n[i] - y_min) / (y_max - y_min) * (H - 40);
+    ctx.lineTo(px, py);
+  }
+  ctx.lineTo(W - 10, y0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // potential (green)
+  ctx.strokeStyle = "#3fb950";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < x.length; i++) {
+    const px = pad + (x[i] - xmin) / (xmax - xmin) * (W - pad - 10);
+    const py = (H - 30) - (V[i] - y_min) / (y_max - y_min) * (H - 40);
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
+  // orbitals (colored)
+  const colors = ["#f85149", "#d29922", "#a371f7", "#39c5cf"];
+  const oscale = n_max / 2;
+  for (let k = 0; k < orbitals.length; k++) {
+    ctx.strokeStyle = colors[k % colors.length];
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let i = 0; i < x.length; i++) {
+      const px = pad + (x[i] - xmin) / (xmax - xmin) * (W - pad - 10);
+      const py = y0 - orbitals[k][i] * oscale / (y_max - y_min) * (H - 40);
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  $legend.innerHTML = "";
+  const el1 = document.createElement("span");
+  el1.innerHTML = '<i style="background:#58a6ff"></i>density n(x)';
+  $legend.appendChild(el1);
+  const el2 = document.createElement("span");
+  el2.innerHTML = '<i style="background:#3fb950"></i>total potential V(x)';
+  $legend.appendChild(el2);
+  for (let k = 0; k < orbitals.length; k++) {
+    const el = document.createElement("span");
+    el.innerHTML = `<i style="background:${colors[k % colors.length]}"></i>φ${k} (ε=${result.eigenvalues[k].toFixed(3)})`;
+    $legend.appendChild(el);
+  }
+
+  return `${result.potential}  ·  ${result.n_electrons} e⁻  ·  E = ${result.energy_total.toFixed(4)}  ·  ${result.iterations} iters`;
+}
+
+function drawCircuitDiagram(circuitSpec) {
+  const W = canvas.width, H = canvas.height, padX = 60, padY = 35;
+  const n = circuitSpec.n_qubits;
+  const gates = circuitSpec.gates || [];
+  const cols = gates.length;
+  const usableH = Math.floor(H * 0.55);
+  const wireGap = Math.min(50, (usableH - padY) / Math.max(n - 1, 1));
+  const colGap = Math.min(70, (W - 2*padX) / Math.max(cols, 1));
+
+  ctx.strokeStyle = "#30363d";
+  ctx.lineWidth = 1;
+  for (let q = 0; q < n; q++) {
+    const y = padY + q * wireGap;
+    ctx.beginPath();
+    ctx.moveTo(padX, y);
+    ctx.lineTo(W - 30, y);
+    ctx.stroke();
+    ctx.fillStyle = "#8b949e";
+    ctx.font = "11px ui-monospace, monospace";
+    ctx.fillText("q" + q, 20, y + 4);
+  }
+
+  const gateColor = (name) => {
+    if (name === "H") return "#58a6ff";
+    if (["X","Y","Z","S","T"].includes(name)) return "#3fb950";
+    if (["RX","RY","RZ"].includes(name)) return "#d29922";
+    if (["CNOT","CX","CZ","SWAP"].includes(name)) return "#a371f7";
+    return "#8b949e";
+  };
+
+  gates.forEach((g, i) => {
+    const x = padX + (i + 0.5) * colGap;
+    const name = (g.gate || "").toUpperCase();
+    const targets = g.targets || [];
+
+    if (["H","X","Y","Z","S","T","RX","RY","RZ"].includes(name)) {
+      const q = targets[0];
+      const y = padY + q * wireGap;
+      const boxSize = 24;
+      ctx.fillStyle = gateColor(name) + "33";
+      ctx.strokeStyle = gateColor(name);
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(x - boxSize/2, y - boxSize/2, boxSize, boxSize);
+      ctx.strokeRect(x - boxSize/2, y - boxSize/2, boxSize, boxSize);
+      ctx.fillStyle = "#e6edf3";
+      ctx.font = "bold 11px ui-monospace, monospace";
+      const tw = ctx.measureText(name).width;
+      ctx.fillText(name, x - tw/2, y + 4);
+    } else if (name === "CNOT" || name === "CX" || name === "CZ") {
+      const ctrl = targets[0], targ = targets[1];
+      const yCtrl = padY + ctrl * wireGap;
+      const yTarg = padY + targ * wireGap;
+      ctx.strokeStyle = gateColor(name);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, Math.min(yCtrl, yTarg));
+      ctx.lineTo(x, Math.max(yCtrl, yTarg));
+      ctx.stroke();
+      ctx.fillStyle = gateColor(name);
+      ctx.beginPath();
+      ctx.arc(x, yCtrl, 4, 0, 2*Math.PI);
+      ctx.fill();
+      if (name === "CZ") {
+        ctx.beginPath();
+        ctx.arc(x, yTarg, 4, 0, 2*Math.PI);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(x, yTarg, 8, 0, 2*Math.PI);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x-8, yTarg); ctx.lineTo(x+8, yTarg);
+        ctx.moveTo(x, yTarg-8); ctx.lineTo(x, yTarg+8);
+        ctx.stroke();
+      }
+    } else if (name === "SWAP") {
+      const a = targets[0], b = targets[1];
+      const ya = padY + a * wireGap;
+      const yb = padY + b * wireGap;
+      ctx.strokeStyle = gateColor(name);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, Math.min(ya, yb));
+      ctx.lineTo(x, Math.max(ya, yb));
+      ctx.stroke();
+      for (const y of [ya, yb]) {
+        ctx.beginPath();
+        ctx.moveTo(x-6, y-6); ctx.lineTo(x+6, y+6);
+        ctx.moveTo(x-6, y+6); ctx.lineTo(x+6, y-6);
+        ctx.stroke();
+      }
+    }
+  });
+
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.fillText("circuit: " + (circuitSpec.id || "custom") + " - " + n + " qubits, " + gates.length + " gates", padX, 18);
+}
+
+function drawCircuit(result, circuitSpec) {
+  const n = result.n_qubits;
+  const probs = result.probabilities;
+  const W = canvas.width, H = canvas.height;
+
+  if (circuitSpec) {
+    drawCircuitDiagram(circuitSpec);
+    const pad = 50;
+    const nBars = probs.length;
+    const barW = (W - pad - 20) / nBars;
+    const pmax = Math.max(...probs, 0.01);
+    const yOffset = Math.floor(H * 0.55);
+    const hBottom = H - 30;
+    const hAvail = hBottom - yOffset - 20;
+
+    ctx.strokeStyle = "#30363d";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad, yOffset);
+    ctx.lineTo(pad, hBottom);
+    ctx.lineTo(W - 10, hBottom);
+    ctx.stroke();
+    ctx.fillStyle = "#8b949e";
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText("P(state)", 8, yOffset + 10);
+
+    for (let i = 0; i < nBars; i++) {
+      const p = probs[i];
+      const x = pad + i * barW + barW * 0.1;
+      const y = hBottom - (p / pmax) * hAvail;
+      ctx.fillStyle = "#58a6ff";
+      ctx.fillRect(x, y, barW * 0.8, hBottom - y);
+      const label = i.toString(2).padStart(n, "0");
+      ctx.save();
+      ctx.translate(pad + i * barW + barW / 2, hBottom + 4);
+      ctx.fillStyle = "#8b949e";
+      ctx.font = "9px ui-monospace, monospace";
+      ctx.rotate(-Math.PI / 4);
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
+    }
+  } else {
+    const pad = 50;
+    const nBars = probs.length;
+    const barW = (W - pad - 20) / nBars;
+    const pmax = Math.max(...probs, 0.01);
+    drawAxes(0, nBars, "basis state", 0, pmax, "P(state)");
+    for (let i = 0; i < nBars; i++) {
+      const p = probs[i];
+      const x = pad + i * barW + barW * 0.1;
+      const y = (H - 30) - (p / pmax) * (H - 50);
+      ctx.fillStyle = "#58a6ff";
+      ctx.fillRect(x, y, barW * 0.8, (H - 30) - y);
+      const label = i.toString(2).padStart(n, "0");
+      ctx.save();
+      ctx.translate(pad + i * barW + barW / 2, H - 26);
+      ctx.fillStyle = "#8b949e";
+      ctx.font = "9px ui-monospace, monospace";
+      ctx.rotate(-Math.PI / 4);
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  $legend.innerHTML = "";
+  const nonzero = probs.filter(p => p > 1e-6).length;
+  let extra = "";
+  if (result.entanglement_entropy_bits !== undefined) {
+    extra = "  -  S(q0) = " + result.entanglement_entropy_bits.toFixed(4) + " bits";
+  }
+  if (result.purity !== undefined) {
+    extra += "  -  purity: " + result.purity.toFixed(4);
+  }
+  if (result.noise) {
+    extra += "  -  noise: " + result.noise.type + "(" + result.noise.rate + ")";
+  }
+  if (result.counts) {
+    const top = Object.entries(result.counts).sort((a,b) => b[1]-a[1]).slice(0,3)
+      .map(([k,v]) => k + "x" + v).join(" ");
+    extra += "  -  top shots: " + top;
+  }
+  if (result.bloch) {
+    drawBlochSphere(result.bloch);
+    const bl = result.bloch.map(b => "q" + b.qubit + " r=" + b.r.toFixed(3)).join(", ");
+    extra += "  -  Bloch: " + bl;
+  } else {
+    clearBloch();
+  }
+  return n + " qubits  -  " + nonzero + " nonzero states" + extra;
+}
+
 function draw(result) {
+  if (result.algorithm === "DFT_1D") return drawDFT(result);
+  if (result.algorithm === "VMC_Hubbard") return drawVMC(result);
+  if (result.frames && result.Nx && result.Ny) return drawLattice(result);
+  if (result.algorithm === "VQE_H2") return drawVQE(result);
+  if (result.probabilities && result.n_qubits && !result.binary_string) return drawCircuit(result, lastCircuitSpec);
   clearCanvas();
-  if (result.wavefunctions) return drawParticle(result);
-  if (result.levels) return drawHydrogen(result);
+  if (result.binary_string !== undefined && result.n_ancilla !== undefined) {
+    try {
+      return drawQPE(result);
+    } catch (e) {
+      console.error("drawQPE failed:", e);
+      $meta.textContent = "QPE render error: " + e.message;
+      return "QPE render error";
+    }
+  }
+  document.getElementById("anim").style.display = "none";
+  if (result.frames) return drawEvolve(result);
   if (result.curve) return drawN2(result);
+  if (result.levels && result.levels[0] && result.levels[0].quanta) {
+    const is3d = result.levels[0].quanta[0] && "nz" in result.levels[0].quanta[0];
+    return drawBox(result, is3d ? 3 : 2);
+  }
+  if (result.levels) return drawHydrogen(result);
+  if (result.wavefunctions && result.omega_eV !== undefined) return drawOscillator(result);
+  if (result.wavefunctions && result.potential_eV) return drawFiniteWell(result);
+  if (result.wavefunctions) return drawParticle(result);
   return "no renderer for this result shape";
 }
 
 
 function toCSV(result) {
+  if (result.frames) {
+    const xs = result.x_nm;
+    const frames = result.frames;
+    const header = ["x_nm"].concat(frames.map(f => `t_${f.t_fs.toFixed(1)}fs`));
+    const rows = xs.map((x, i) => [x].concat(frames.map(f => f.prob_density[i])));
+    return header.join(",") + "\n" + rows.map(r => r.join(",")).join("\n");
+  }
+  if (result.levels && result.levels[0] && result.levels[0].quanta) {
+    const header = ["energy_eV", "degeneracy", "quanta"];
+    const rows = result.levels.map(L => {
+      const qs = L.quanta.map(q => {
+        if ("nz" in q) return `${q.nx},${q.ny},${q.nz}`;
+        return `${q.nx},${q.ny}`;
+      }).join(";");
+      return [L.energy_eV, L.degeneracy, qs];
+    });
+    return header.join(",") + "\n" + rows.map(r => r.join(",")).join("\n");
+  }
   if (result.wavefunctions) {
     const xs = result.x_nm, psi = result.wavefunctions;
     const header = ["x_nm"].concat(psi.map((_, i) => `psi_${i+1}`));
@@ -291,13 +1510,95 @@ $csv.addEventListener("click", () => {
   a.click();
 });
 
+
+async function refreshHistory() {
+  try {
+    const res = await fetch("/simulations/history?limit=10");
+    const items = await res.json();
+    $history.innerHTML = "";
+    for (const r of items) {
+      const row = document.createElement("div");
+      row.className = "hrow";
+      row.innerHTML = `<span>${r.system_type}</span>` +
+        `<a href="?run=${r.id}">${r.id.slice(0,8)}…</a>` +
+        `<span style="text-align:right">${r.compute_time_ms.toFixed(1)} ms</span>`;
+      $history.appendChild(row);
+    }
+  } catch (e) {
+    $history.textContent = "(history unavailable)";
+  }
+}
+
+document.addEventListener("change", (e) => {
+  if (e.target.id === "p_open_editor") {
+    if (parseInt(e.target.value, 10)) {
+      const sys = $sys.value;
+      // pick n_qubits based on current circuit
+      let nq = 2;
+      if (sys === "circuit") {
+        const name = document.getElementById("p_circuit_name")?.value || "bell";
+        if (name === "ghz3") nq = 3;
+        else if (name === "ghz5") nq = 5;
+        else if (name === "superposition") nq = 1;
+      }
+      editorShow(nq);
+    } else {
+      editorHide();
+    }
+  }
+});
+
 async function runSim() {
   $err.textContent = "";
   $run.disabled = true;
   $run.textContent = "running…";
   try {
-    const body = { system_type: $sys.value, parameters: collectParams() };
-    if ($sys.value === "particle") body.parameters.return_wavefunctions = true;
+    const rawParams = collectParams();
+    let body;
+    if ($sys.value === "circuit") {
+      const cname = rawParams.circuit_name || "bell";
+      const cres = await fetch(`/circuits/${cname}`);
+      if (!cres.ok) {
+        const errBody = await cres.json().catch(() => ({}));
+        $err.textContent = `unknown circuit "${cname}". valid: bell, ghz3, ghz5, superposition, qft2, grover2`;
+        throw new Error(errBody.detail || `unknown circuit "${cname}"`);
+      }
+      const c = await cres.json();
+      const apiParams = {
+        n_qubits: c.n_qubits,
+        gates: c.gates,
+        shots: parseInt(rawParams.shots, 10) || 0,
+      };
+      if (parseInt(rawParams.entangle_q0, 10)) apiParams.entanglement_cut = [0];
+      if (parseInt(rawParams.bloch_q0, 10)) apiParams.bloch_qubits = [0, 1].filter(q => q < c.n_qubits);
+
+      // noise
+      const ntype = rawParams.noise_type || "none";
+      if (ntype !== "none") {
+        const rate = parseFloat(rawParams.noise_rate);
+        if (isNaN(rate) || rate < 0 || rate > 1) {
+          throw new Error("noise_rate must be between 0 and 1");
+        }
+        const qspec = String(rawParams.noise_qubits || "all").trim();
+        let qubits;
+        if (qspec.toLowerCase() === "all" || qspec === "") {
+          qubits = Array.from({ length: c.n_qubits }, (_, i) => i);
+        } else {
+          qubits = qspec.split(",").map(s => parseInt(s.trim(), 10));
+          for (const q of qubits) {
+            if (isNaN(q) || q < 0 || q >= c.n_qubits) {
+              throw new Error(`noise qubit ${q} out of range 0..${c.n_qubits - 1}`);
+            }
+          }
+        }
+        apiParams.noise = { type: ntype, rate: rate, qubits: qubits };
+      }
+      body = { system_type: "circuit", parameters: apiParams };
+      lastCircuitSpec = { id: cname, n_qubits: c.n_qubits, gates: c.gates };
+    } else {
+      body = { system_type: $sys.value, parameters: rawParams };
+      if ($sys.value === "particle") body.parameters.return_wavefunctions = true;
+    }
     const t0 = performance.now();
     const res = await fetch("/simulations/run", {
       method: "POST",
@@ -306,6 +1607,7 @@ async function runSim() {
     });
     const data = await res.json();
     lastResult = data.result;
+    lastRunId = data.id;
     if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
     const wall = (performance.now() - t0).toFixed(1);
     const line = draw(data.result);
@@ -321,11 +1623,655 @@ async function runSim() {
 }
 
 $sys.addEventListener("change", renderParams);
+
+
+function ensureWs() {
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+  ws = new WebSocket(`ws://${location.host}/ws/run`);
+  ws.onmessage = (ev) => {
+    const data = JSON.parse(ev.data);
+    wsPending = false;
+    if (data.status === "completed") {
+      lastResult = data.result;
+      const line = draw(data.result);
+      $meta.textContent = `live · server ${data.compute_time_ms.toFixed(1)} ms · ${line}`;
+      $raw.textContent = JSON.stringify(data, null, 2);
+    } else {
+      $err.textContent = "error: " + data.detail;
+    }
+  };
+  ws.onclose = () => { ws = null; };
+}
+
+function sendLive() {
+  if (!$live.checked) return;
+  if (wsPending) return;
+  const body = { system_type: $sys.value, parameters: collectParams() };
+  const key = JSON.stringify(body);
+  if (key === wsLastParams) return;
+  wsLastParams = key;
+  ensureWs();
+  const send = () => {
+    wsPending = true;
+    ws.send(key);
+  };
+  if (ws.readyState === WebSocket.OPEN) send();
+  else ws.addEventListener("open", send, { once: true });
+}
+
+document.addEventListener("input", (e) => {
+  if (!e.target.matches("input[type=number], select")) return;
+  if ($live.checked) sendLive();
+});
+
+document.addEventListener("change", (e) => {
+  if (!e.target.matches("select#p_circuit_name")) return;
+  if ($live.checked) sendLive();
+});
+
+$sys.addEventListener("change", () => {
+  if ($live.checked) {
+    wsLastParams = null;
+    sendLive();
+  }
+});
+
+$live.addEventListener("change", () => {
+  if ($live.checked) {
+    wsLastParams = null;
+    sendLive();
+  }
+});
+
+
+// ============================================================
+// Visual circuit editor
+// ============================================================
+
+const EDITOR_GATES = [
+  { name: "H",  type: "1q" },
+  { name: "X",  type: "1q" },
+  { name: "Y",  type: "1q" },
+  { name: "Z",  type: "1q" },
+  { name: "S",  type: "1q" },
+  { name: "T",  type: "1q" },
+  { name: "Rx", type: "rot", param: Math.PI/2 },
+  { name: "Ry", type: "rot", param: Math.PI/2 },
+  { name: "Rz", type: "rot", param: Math.PI/2 },
+  { name: "CNOT", type: "2q" },
+  { name: "CZ",   type: "2q" },
+  { name: "SWAP", type: "2q" },
+];
+
+const EDITOR_COLS = 12;
+let editorNQubits = 2;
+let editorGrid = [];   // editorGrid[q][col] = gate cell or null
+let editorActiveGate = null;   // { name, type, param }
+let editorPending2Q = null;    // { name, control, col } waiting for target
+
+function editorInit(n_qubits) {
+  editorNQubits = n_qubits;
+  editorGrid = Array.from({ length: n_qubits }, () => new Array(EDITOR_COLS).fill(null));
+  editorActiveGate = null;
+  editorPending2Q = null;
+  editorRenderPalette();
+  editorRenderGrid();
+}
+
+function editorRenderPalette() {
+  const $pal = document.getElementById("editorPalette");
+  $pal.innerHTML = "";
+  for (const g of EDITOR_GATES) {
+    const b = document.createElement("button");
+    b.className = "pal-btn" + (editorActiveGate && editorActiveGate.name === g.name ? " active" : "");
+    b.textContent = g.name;
+    b.addEventListener("click", () => {
+      editorActiveGate = { ...g };
+      editorPending2Q = null;
+      editorRenderPalette();
+      editorStatus(`selected ${g.name} — click a cell`);
+    });
+    $pal.appendChild(b);
+  }
+  // cancel button
+  const cancel = document.createElement("button");
+  cancel.className = "pal-btn";
+  cancel.textContent = "✕";
+  cancel.title = "deselect";
+  cancel.addEventListener("click", () => {
+    editorActiveGate = null;
+    editorPending2Q = null;
+    editorRenderPalette();
+    editorStatus("");
+  });
+  $pal.appendChild(cancel);
+}
+
+function editorRenderGrid() {
+  const $g = document.getElementById("editorGrid");
+  $g.innerHTML = "";
+  for (let q = 0; q < editorNQubits; q++) {
+    const row = document.createElement("div");
+    row.className = "egrid-row";
+    const lbl = document.createElement("div");
+    lbl.className = "egrid-label";
+    lbl.textContent = "q" + q;
+    row.appendChild(lbl);
+    for (let c = 0; c < EDITOR_COLS; c++) {
+      const cell = document.createElement("div");
+      cell.className = "egrid-cell";
+      const g = editorGrid[q][c];
+      if (g) {
+        cell.classList.add("occupied");
+        cell.textContent = g.gate;
+      }
+      cell.addEventListener("click", () => editorCellClick(q, c));
+      row.appendChild(cell);
+    }
+    $g.appendChild(row);
+  }
+}
+
+function editorStatus(msg) {
+  document.getElementById("editorStatus").textContent = msg;
+}
+
+function editorCellClick(q, c) {
+  if (!editorActiveGate) {
+    // if there's a gate here, remove it
+    if (editorGrid[q][c]) {
+      editorGrid[q][c] = null;
+      editorRenderGrid();
+      editorStatus(`removed gate at q${q}, col ${c}`);
+    }
+    return;
+  }
+
+  const g = editorActiveGate;
+
+  if (g.type === "1q") {
+    editorGrid[q][c] = { gate: g.name };
+    editorRenderGrid();
+    editorStatus(`placed ${g.name} on q${q}`);
+  } else if (g.type === "rot") {
+    const theta = parseFloat(prompt(`angle for ${g.name} (radians)`, String(g.param || Math.PI/2)));
+    if (isNaN(theta)) { editorStatus("cancelled"); return; }
+    editorGrid[q][c] = { gate: g.name, params: [theta] };
+    editorRenderGrid();
+    editorStatus(`placed ${g.name}(${theta.toFixed(3)}) on q${q}`);
+  } else if (g.type === "2q") {
+    if (!editorPending2Q) {
+      // first click — control
+      editorPending2Q = { gate: g.name, control: q, col: c };
+      editorStatus(`${g.name}: control at q${q}, click target`);
+    } else {
+      // second click — target
+      if (editorPending2Q.col !== c) {
+        editorStatus(`control and target must be in the same column (col ${editorPending2Q.col})`);
+        return;
+      }
+      if (editorPending2Q.control === q) {
+        editorStatus("control and target must be different qubits");
+        return;
+      }
+      editorGrid[editorPending2Q.control][c] = { gate: g.name, role: "control" };
+      editorGrid[q][c] = { gate: g.name, role: "target" };
+      editorPending2Q = null;
+      editorRenderGrid();
+      editorStatus(`placed ${g.name} between q${editorPending2Q?.control ?? "?"} and q${q}`);
+    }
+  }
+}
+
+function editorBuildCircuit() {
+  const gates = [];
+  // iterate columns left to right, rows top to bottom
+  for (let c = 0; c < EDITOR_COLS; c++) {
+    const seen2Q = new Set();
+    for (let q = 0; q < editorNQubits; q++) {
+      const cell = editorGrid[q][c];
+      if (!cell) continue;
+      if (cell.gate === "CNOT" || cell.gate === "CZ" || cell.gate === "SWAP") {
+        if (seen2Q.has(cell.gate)) continue;
+        // find the matching control+target pair in this column
+        const pair = [];
+        for (let qq = 0; qq < editorNQubits; qq++) {
+          const cc = editorGrid[qq][c];
+          if (cc && cc.gate === cell.gate) pair.push(qq);
+        }
+        if (pair.length === 2) {
+          gates.push({ gate: cell.gate, targets: [pair[0], pair[1]] });
+          seen2Q.add(cell.gate);
+        }
+      } else {
+        if (cell.params) {
+          gates.push({ gate: cell.gate, targets: [q], params: cell.params });
+        } else {
+          gates.push({ gate: cell.gate, targets: [q] });
+        }
+      }
+    }
+  }
+  return { n_qubits: editorNQubits, gates };
+}
+
+// ============================================================
+// Wiring
+// ============================================================
+
+function editorShow(n_qubits) {
+  const panel = document.getElementById("editorPanel");
+  panel.style.display = "block";
+  if (!editorGrid.length || editorNQubits !== n_qubits) {
+    editorInit(n_qubits);
+  } else {
+    editorRenderGrid();
+  }
+  editorStatus(`editor ready — ${n_qubits} qubits, ${EDITOR_COLS} columns`);
+}
+
+function editorHide() {
+  document.getElementById("editorPanel").style.display = "none";
+}
+
+// Editor button wiring — attached at parse time (this script runs after DOM)
+(function wireEditor() {
+  const $clear = document.getElementById("editorClear");
+  const $run = document.getElementById("editorRun");
+  if (!$clear || !$run) {
+    console.warn("[editor] buttons not found at wire time");
+    return;
+  }
+  $clear.addEventListener("click", () => {
+    editorInit(editorNQubits);
+    editorStatus("cleared");
+  });
+  $run.addEventListener("click", async () => {
+    console.log("[editor] run clicked");
+    const circ = editorBuildCircuit();
+    console.log("[editor] built circuit:", circ);
+    if (!circ.gates.length) { editorStatus("no gates placed"); return; }
+    editorStatus("running " + circ.gates.length + " gates...");
+    lastCircuitSpec = { id: "editor", n_qubits: circ.n_qubits, gates: circ.gates };
+    try {
+      const res = await fetch("/simulations/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_type: "circuit",
+          parameters: { n_qubits: circ.n_qubits, gates: circ.gates, shots: 0, entanglement_cut: [0], bloch_qubits: [0, 1].filter(q => q < circ.n_qubits) },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "run failed");
+      const line = draw(data.result);
+      $meta.textContent = "editor · server " + data.compute_time_ms.toFixed(1) + " ms · " + line;
+      $raw.textContent = JSON.stringify(data, null, 2);
+      editorStatus("ran " + circ.gates.length + " gates in " + data.compute_time_ms.toFixed(1) + " ms");
+    } catch (e) {
+      console.error("[editor] run failed:", e);
+      editorStatus("error: " + e.message);
+    }
+  });
+  console.log("[editor] wired buttons OK");
+})();
+
+
+// ---- video recording ----
+let mediaRecorder = null;
+let recordedChunks = [];
+
+function startRecording() {
+  recordedChunks = [];
+  const stream = canvas.captureStream(20);  // 20 fps
+  try {
+    mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
+  } catch (e) {
+    try {
+      mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+    } catch (e2) {
+      $err.textContent = "recording not supported in this browser";
+      return false;
+    }
+  }
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+  };
+  mediaRecorder.start();
+  return true;
+}
+
+function stopRecording() {
+  if (!mediaRecorder) return;
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(recordedChunks, { type: "video/webm" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `qen_recording_${Date.now()}.webm`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  mediaRecorder.stop();
+  mediaRecorder = null;
+}
+
+async function recordAndPlay() {
+  const $rec = document.getElementById("recordBtn");
+  if (!latticeFrames || !latticeFrames.length) {
+    $err.textContent = "run a 2D lattice simulation first";
+    return;
+  }
+  if (!startRecording()) return;
+  $rec.textContent = "■ stop";
+  $rec.style.background = "#f85149";
+  // play through all frames at ~20 fps
+  const fps = 20;
+  const totalMs = (latticeFrames.length / fps) * 1000;
+  latticeCurrentFrame = 0;
+  latticePlaying = true;
+  const $play = document.getElementById("playBtn");
+  $play.textContent = "❚❚ pause";
+  latticeTimer = setInterval(() => {
+    latticeCurrentFrame = (latticeCurrentFrame + 1);
+    if (latticeCurrentFrame >= latticeFrames.length) {
+      clearInterval(latticeTimer);
+      latticePlaying = false;
+      $play.textContent = "▶ play";
+      stopRecording();
+      $rec.textContent = "● record";
+      $rec.style.background = "#21262d";
+      $meta.textContent += "  ·  recording saved";
+      return;
+    }
+    drawLatticeFrame(latticeCurrentFrame);
+  }, 1000 / fps);
+}
+
+
+// ============================================================
+// Minimal GIF encoder (LZW + 256-color palette)
+// Adapted from the classic jsgif / gif.js approach.
+// ============================================================
+
+function gifEncode(frames, width, height, delayMs) {
+  // frames: array of Uint8ClampedArray RGBA pixels (width*height*4)
+  const out = [];
+  const writeByte = (b) => out.push(b & 0xff);
+  const writeShort = (v) => { writeByte(v); writeByte(v >> 8); };
+  const writeString = (s) => { for (let i = 0; i < s.length; i++) writeByte(s.charCodeAt(i)); };
+
+  // Header
+  writeString("GIF89a");
+  // Logical screen descriptor
+  writeShort(width);
+  writeShort(height);
+  writeByte(0xF7);              // global color table, 256 colors
+  writeByte(0);                 // background color index
+  writeByte(0);                 // pixel aspect ratio
+
+  // Global color table (256-entry grayscale→cyan-ish palette)
+  // We'll just use a 6x6x6 = 216-color RGB cube + 40 grays.
+  for (let r = 0; r < 6; r++) {
+    for (let g = 0; g < 6; g++) {
+      for (let b = 0; b < 6; b++) {
+        writeByte(Math.round(r * 51));
+        writeByte(Math.round(g * 51));
+        writeByte(Math.round(b * 51));
+      }
+    }
+  }
+  for (let i = 0; i < 40; i++) {
+    const v = Math.round(i * 6.375);
+    writeByte(v); writeByte(v); writeByte(v);
+  }
+
+  // Netscape loop extension (infinite loop)
+  writeByte(0x21); writeByte(0xFF); writeByte(0x0B);
+  writeString("NETSCAPE2.0");
+  writeByte(0x03); writeByte(0x01); writeShort(0); writeByte(0);
+
+  const delayCs = Math.max(2, Math.round(delayMs / 10));
+
+  for (const rgba of frames) {
+    // Graphic control extension
+    writeByte(0x21); writeByte(0xF9); writeByte(0x04);
+    writeByte(0x00);              // no transparency
+    writeShort(delayCs);
+    writeByte(0x00);              // no transparent color index
+    writeByte(0x00);              // block terminator
+
+    // Image descriptor
+    writeByte(0x2C);
+    writeShort(0); writeShort(0);
+    writeShort(width); writeShort(height);
+    writeByte(0x00);              // no local color table
+
+    // Convert RGBA to palette indices
+    const indices = new Uint8Array(width * height);
+    for (let i = 0; i < width * height; i++) {
+      const r = rgba[i * 4]     >> 5;   // 0..7 → clamp to 0..5
+      const g = rgba[i * 4 + 1] >> 5;
+      const b = rgba[i * 4 + 2] >> 5;
+      const ri = Math.min(r, 5), gi = Math.min(g, 5), bi = Math.min(b, 5);
+      indices[i] = ri * 36 + gi * 6 + bi;
+    }
+
+    // LZW encode
+    lzwEncode(indices, writeByte);
+  }
+
+  writeByte(0x3B);  // trailer
+  return new Uint8Array(out);
+}
+
+function lzwEncode(pixels, writeByte) {
+  const MIN_CODE_SIZE = 8;
+  const CLEAR_CODE = 1 << MIN_CODE_SIZE;
+  const EOI_CODE = CLEAR_CODE + 1;
+
+  writeByte(MIN_CODE_SIZE);
+
+  let codeSize = MIN_CODE_SIZE + 1;
+  let nextCode = EOI_CODE + 1;
+  let dict = new Map();
+  const resetDict = () => {
+    dict = new Map();
+    for (let i = 0; i < CLEAR_CODE; i++) dict.set(String(i), i);
+    nextCode = EOI_CODE + 1;
+    codeSize = MIN_CODE_SIZE + 1;
+  };
+  resetDict();
+
+  // Bit writer
+  let bitBuffer = 0;
+  let bitCount = 0;
+  const subBlock = [];
+  const flushBlock = () => {
+    if (subBlock.length === 0) return;
+    writeByte(subBlock.length);
+    for (const b of subBlock) writeByte(b);
+    subBlock.length = 0;
+  };
+  const emitByte = (b) => {
+    subBlock.push(b);
+    if (subBlock.length === 255) flushBlock();
+  };
+  const writeCode = (code) => {
+    bitBuffer |= code << bitCount;
+    bitCount += codeSize;
+    while (bitCount >= 8) {
+      emitByte(bitBuffer & 0xff);
+      bitBuffer >>= 8;
+      bitCount -= 8;
+    }
+  };
+
+  writeCode(CLEAR_CODE);
+
+  let current = String(pixels[0]);
+  for (let i = 1; i < pixels.length; i++) {
+    const next = String(pixels[i]);
+    const combined = current + "," + next;
+    if (dict.has(combined)) {
+      current = combined;
+    } else {
+      writeCode(dict.get(current));
+      if (nextCode < 4096) {
+        dict.set(combined, nextCode++);
+        if (nextCode > (1 << codeSize) && codeSize < 12) codeSize++;
+      } else {
+        writeCode(CLEAR_CODE);
+        resetDict();
+      }
+      current = next;
+    }
+  }
+  writeCode(dict.get(current));
+  writeCode(EOI_CODE);
+
+  // flush bits
+  while (bitCount > 0) {
+    emitByte(bitBuffer & 0xff);
+    bitBuffer >>= 8;
+    bitCount -= 8;
+  }
+  flushBlock();
+  writeByte(0);  // block terminator
+}
+
+async function exportGIF() {
+  if (!latticeFrames || !latticeFrames.length) {
+    $err.textContent = "run a 2D lattice simulation first";
+    return;
+  }
+  const $btn = document.getElementById("gifBtn");
+  $btn.textContent = "encoding…";
+  $btn.disabled = true;
+
+  // Small size for GIF (keep file manageable)
+  const W = 200, H = 200;
+  const off = document.createElement("canvas");
+  off.width = W; off.height = H;
+  const octx = off.getContext("2d");
+
+  // Grab original canvas size (we'll redraw lattice frames into the off-screen canvas)
+  const origW = canvas.width, origH = canvas.height;
+
+  const framesRGBA = [];
+  const savedCurrent = latticeCurrentFrame;
+  for (let idx = 0; idx < latticeFrames.length; idx++) {
+    // Render the lattice frame to the main canvas, then downscale to off canvas
+    drawLatticeFrame(idx);
+    octx.drawImage(canvas, 0, 0, origW, origH, 0, 0, W, H);
+    framesRGBA.push(octx.getImageData(0, 0, W, H).data);
+    // yield to UI every few frames
+    if (idx % 4 === 0) await new Promise(r => setTimeout(r, 0));
+  }
+
+  // Restore the display to where it was
+  drawLatticeFrame(savedCurrent);
+
+  const delayMs = 100;   // 10 fps
+  let gifBytes;
+  try {
+    gifBytes = gifEncode(framesRGBA, W, H, delayMs);
+  } catch (e) {
+    $err.textContent = "GIF encoding failed: " + e.message;
+    $btn.textContent = "save GIF";
+    $btn.disabled = false;
+    return;
+  }
+
+  const blob = new Blob([gifBytes], { type: "image/gif" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `qen_lattice_${Date.now()}.gif`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+  $btn.textContent = "save GIF";
+  $btn.disabled = false;
+  $meta.textContent += "  ·  GIF saved (" + Math.round(gifBytes.length / 1024) + " KB)";
+}
+
+// ---- animation player wiring ----
+(function() {
+  const $play = document.getElementById("playBtn");
+  const $scrub = document.getElementById("scrub");
+  if (!$play || !$scrub) return;
+  $play.addEventListener("click", () => {
+    // lattice2d animation
+    if (latticeFrames) {
+      latticePlaying = !latticePlaying;
+      $play.textContent = latticePlaying ? "❚❚ pause" : "▶ play";
+      if (latticePlaying) {
+        latticeTimer = setInterval(() => {
+          latticeCurrentFrame = (latticeCurrentFrame + 1) % latticeFrames.length;
+          drawLatticeFrame(latticeCurrentFrame);
+        }, 100);
+      } else {
+        clearInterval(latticeTimer);
+      }
+      return;
+    }
+    // evolve animation (existing)
+    if (!evolveFrames) return;
+    evolvePlaying = !evolvePlaying;
+    $play.textContent = evolvePlaying ? "❚❚ pause" : "▶ play";
+    if (evolvePlaying) {
+      evolveTimer = setInterval(() => {
+        evolveCurrentFrame = (evolveCurrentFrame + 1) % evolveFrames.length;
+        drawEvolveFrame(evolveCurrentFrame);
+      }, 60);
+    } else {
+      clearInterval(evolveTimer);
+    }
+  });
+  $scrub.addEventListener("input", (e) => {
+    if (latticeFrames) {
+      latticeCurrentFrame = parseInt(e.target.value, 10);
+      drawLatticeFrame(latticeCurrentFrame);
+      return;
+    }
+    evolveCurrentFrame = parseInt(e.target.value, 10);
+    drawEvolveFrame(evolveCurrentFrame);
+  });
+})();
+
+
+$permalink.addEventListener("click", async () => {
+  if (!lastRunId) { $err.textContent = "run something first"; return; }
+  const url = `${location.origin}/runs/${lastRunId}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    $permalink.textContent = "copied!";
+    setTimeout(() => { $permalink.textContent = "copy permalink"; }, 1200);
+  } catch (e) {
+    $meta.textContent = `permalink: ${url}`;
+  }
+});
+
 $run.addEventListener("click", runSim);
-loadFromURL();
-renderParams();
-clearCanvas();
-runSim();
+(async () => {
+  renderParams();
+  clearCanvas();
+  refreshHistory();
+  const loaded = await loadRunFromURL();
+  if (!loaded) {
+    loadFromURL();
+    runSim();
+  }
+})();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js")
+      .catch(e => console.warn("SW registration failed:", e));
+  });
+}
 </script>
 </body>
 </html>

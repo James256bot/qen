@@ -1,0 +1,10 @@
+{
+  "name": "QEN — Quantum Equation Nexus",
+  "short_name": "QEN",
+  "description": "Quantum mechanics simulator on your phone",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "orientation": "any"
+}

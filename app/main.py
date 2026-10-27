@@ -1,25 +1,172 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 import time
 import uuid
 from collections import deque
+from app.db import init_db, insert_run, get_run, list_runs, count_runs
 
+from app.lessons import list_lessons, get_lesson
+from app.i18n import get_strings
 from app.solvers.particle import solve_particle_box
 from app.solvers.entropy import von_neumann_entropy
 from app.solvers.hydrogen import solve_hydrogen
 from app.solvers.n2 import solve_n2
+from app.solvers.oscillator import solve_oscillator
+from app.solvers.finite_well import solve_finite_well
+from app.solvers.box2d import solve_box2d
+from app.solvers.box3d import solve_box3d
+from app.solvers.evolve import solve_time_evolution
+from app.solvers.qsim import run_circuit, CANONICAL_CIRCUITS
+from app.solvers.noisy_circuit import run_circuit_noisy
+from app.solvers.chemistry import run_vqe_h2, h2_exact_ground_energy
+from app.solvers.qpe import run_qpe, phase_gate
+from app.solvers.battery import vqe_molecule, exact_molecule_energy, estimate_voltage, MOLECULES
+from app.solvers.lattice2d import solve_lattice2d
+from app.solvers.vmc import vmc_hubbard, exact_hubbard_ground_energy
+from app.solvers.dft import solve_dft_1d
+from app.intents import parse_intent
+from app.scenarios import list_scenarios, get_scenario
 
 app = FastAPI(title="QEN")
 
+
+@app.websocket("/ws/run")
+async def ws_run(ws: WebSocket):
+    await ws.accept()
+    try:
+        while True:
+            msg = await ws.receive_json()
+            stype = msg.get("system_type", "")
+            params = msg.get("parameters", {})
+            t0 = time.perf_counter()
+            try:
+                result = dispatch(stype, params)
+                dt_ms = (time.perf_counter() - t0) * 1000
+                await ws.send_json({
+                    "status": "completed",
+                    "system_type": stype,
+                    "parameters": params,
+                    "compute_time_ms": dt_ms,
+                    "result": result,
+                })
+            except ValueError as e:
+                await ws.send_json({"status": "error", "detail": str(e)})
+            except Exception as e:
+                await ws.send_json({"status": "error", "detail": f"{type(e).__name__}: {e}"})
+    except WebSocketDisconnect:
+        return
+
+
+@app.get("/service-worker.js")
+def service_worker():
+    # Development: return 404 so browsers unregister any cached SW.
+    raise HTTPException(status_code=404, detail="service worker disabled")
+
+
+@app.get("/manifest.json")
+def manifest():
+    return FileResponse("app/static/manifest.json", media_type="application/manifest+json")
+
+
+@app.get("/scenarios")
+def scenarios_index():
+    return list_scenarios()
+
+
+@app.get("/scenarios/{scenario_id}")
+def scenario_detail(scenario_id: str):
+    sc = get_scenario(scenario_id)
+    if sc is None:
+        raise HTTPException(status_code=404, detail=f"scenario {scenario_id} not found")
+    return {"id": scenario_id, **sc}
+
+
+@app.post("/scenarios/{scenario_id}/run")
+def scenario_run(scenario_id: str):
+    """Execute all steps in the scenario and return the sequence."""
+    sc = get_scenario(scenario_id)
+    if sc is None:
+        raise HTTPException(status_code=404, detail=f"scenario {scenario_id} not found")
+
+    outputs = []
+    t_total = 0.0
+    for i, step in enumerate(sc["steps"]):
+        if step["kind"] == "note":
+            outputs.append({
+                "step": i,
+                "kind": "note",
+                "text": step["text"],
+            })
+        elif step["kind"] == "solve":
+            t0 = time.perf_counter()
+            try:
+                result = dispatch(step["solver"], step["parameters"])
+                dt_ms = (time.perf_counter() - t0) * 1000
+                t_total += dt_ms
+                outputs.append({
+                    "step": i,
+                    "kind": "solve",
+                    "solver": step["solver"],
+                    "parameters": step["parameters"],
+                    "compute_time_ms": dt_ms,
+                    "result": result,
+                })
+            except Exception as e:
+                outputs.append({
+                    "step": i,
+                    "kind": "error",
+                    "detail": f"{type(e).__name__}: {e}",
+                })
+
+    return {
+        "scenario_id": scenario_id,
+        "title": sc["title"],
+        "description": sc["description"],
+        "total_compute_ms": t_total,
+        "steps": outputs,
+    }
+
+
+@app.get("/circuits")
+def circuits_index():
+    return [{"id": k, "n_qubits": v["n_qubits"], "description": v["description"], "n_gates": len(v["gates"])} for k, v in CANONICAL_CIRCUITS.items()]
+
+
+@app.get("/circuits/{name}")
+def circuit_detail(name: str):
+    if name not in CANONICAL_CIRCUITS:
+        raise HTTPException(status_code=404, detail=f"circuit {name} not found")
+    return CANONICAL_CIRCUITS[name]
+
+
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+@app.get("/lessons")
+def lessons_index():
+    return list_lessons()
+
+
+@app.get("/lessons/{lesson_id}")
+def lesson_detail(lesson_id: str):
+    l = get_lesson(lesson_id)
+    if l is None:
+        raise HTTPException(status_code=404, detail=f"lesson {lesson_id} not found")
+    return l
+
+
+@app.get("/i18n/{lang}")
+def i18n_strings(lang: str):
+    return get_strings(lang)
+
 
 @app.get("/")
 def index():
     return FileResponse("app/static/index.html")
 
-HISTORY: deque = deque(maxlen=100)
+init_db()
+HISTORY: deque = deque(maxlen=100)  # kept for backward compat; DB is authoritative
 
 
 class RunRequest(BaseModel):
@@ -54,12 +201,195 @@ def dispatch(system_type, params):
         if not (10 <= n <= 5000):
             raise ValueError("n_points must be between 10 and 5000")
         return solve_n2(**params)
+    if system_type == "oscillator":
+        w = float(params.get("omega_eV", 1.0))
+        if not (1e-6 <= w <= 100.0):
+            raise ValueError("omega_eV must be between 1e-6 and 100")
+        n = int(params.get("n_max", 5))
+        if not (1 <= n <= 30):
+            raise ValueError("n_max must be between 1 and 30")
+        return solve_oscillator(**params)
+
+    if system_type == "finite_well":
+        V0 = float(params.get("V0_eV", 10.0))
+        if not (0.01 <= V0 <= 1000.0):
+            raise ValueError("V0_eV must be between 0.01 and 1000")
+        return solve_finite_well(**params)
+
+    if system_type == "box2d":
+        return solve_box2d(**params)
+
+    if system_type == "box3d":
+        return solve_box3d(**params)
+
+    if system_type == "evolve":
+        return solve_time_evolution(**params)
+
+    if system_type == "circuit":
+        n = int(params.get("n_qubits", 2))
+        if not (1 <= n <= 20):
+            raise ValueError("n_qubits must be between 1 and 20")
+        gates = params.get("gates", [])
+        if not isinstance(gates, list):
+            raise ValueError("gates must be a list")
+        shots = int(params.get("shots", 0))
+        if shots < 0 or shots > 100000:
+            raise ValueError("shots must be between 0 and 100000")
+        ent = params.get("entanglement_cut", None)
+        bloch = params.get("bloch_qubits", None)
+        noise = params.get("noise", None)
+        if noise is None:
+            return run_circuit(n, gates, shots=shots, entanglement_cut=ent, bloch_qubits=bloch)
+        return run_circuit_noisy(n, gates, shots=shots, entanglement_cut=ent,
+                                 bloch_qubits=bloch, noise=noise)
+
+    if system_type == "vqe_h2":
+        R = float(params.get("R_angstrom", 0.735))
+        if not (0.3 <= R <= 5.0):
+            raise ValueError("R_angstrom must be between 0.3 and 5.0")
+        n_layers = int(params.get("n_layers", 2))
+        if not (1 <= n_layers <= 4):
+            raise ValueError("n_layers must be 1..4")
+        max_iter = int(params.get("max_iter", 400))
+        result = run_vqe_h2(R_angstrom=R, n_layers=n_layers, max_iter=max_iter)
+        result["exact_energy_hartree"] = h2_exact_ground_energy(R)
+        result["error_kcal_per_mol"] = (result["energy_hartree"] - result["exact_energy_hartree"]) * 627.509
+        return result
+
+    if system_type == "qpe":
+        phi = float(params.get("phi", 0.25))
+        if not (0.0 <= phi < 1.0):
+            raise ValueError("phi must be in [0, 1)")
+        n = int(params.get("n_ancilla", 5))
+        if not (2 <= n <= 12):
+            raise ValueError("n_ancilla must be between 2 and 12")
+        shots = int(params.get("shots", 0))
+        U = phase_gate(phi)
+        return run_qpe(U, n_ancilla=n, shots=shots)
+
+    if system_type == "battery":
+        molecule = params.get("molecule")
+        if molecule is not None:
+            if molecule not in MOLECULES:
+                raise ValueError(f"unknown molecule {molecule}. valid: {list(MOLECULES.keys())}")
+            r = vqe_molecule(molecule, n_layers=int(params.get("n_layers", 2)), max_iter=int(params.get("max_iter", 400)))
+            r["exact_energy_hartree"] = exact_molecule_energy(molecule)
+            r["error_kcal_per_mol"] = (r["energy_hartree"] - r["exact_energy_hartree"]) * 627.509
+            return r
+        cathode = params.get("cathode", "LiF")
+        anode = params.get("anode", "LiH")
+        return estimate_voltage(cathode, anode, n_electrons=int(params.get("n_electrons", 1)))
+
+    if system_type == "lattice2d":
+        Nx = int(params.get("Nx", 40))
+        Ny = int(params.get("Ny", 40))
+        if Nx * Ny > 10000:
+            raise ValueError("Nx * Ny must be <= 10000")
+        return solve_lattice2d(**params)
+
+    if system_type == "vmc":
+        Nx = int(params.get("Nx", 6))
+        Ny = int(params.get("Ny", 1))
+        N = Nx * Ny
+        if N > 40:
+            raise ValueError("Nx * Ny must be <= 40 for VMC demo")
+        t = float(params.get("t", 1.0))
+        fill = float(params.get("fill", 0.5))
+        N_elec = max(2, int(round(fill * N)))
+        N_up = N_elec // 2
+        N_dn = N_elec - N_up
+        n_samples = int(params.get("n_samples", 4000))
+        do_sweep = bool(int(params.get("sweep", 1)))
+
+        if do_sweep:
+            U_values = [0.0, 2.0, 4.0, 8.0, 12.0, 16.0]
+            sweep_samples = min(n_samples, 500)
+            seeds_per_point = 2
+            sweep_data = []
+            for U in U_values:
+                energies = []
+                gs = []
+                stderrs = []
+                for sd in range(seeds_per_point):
+                    r = vmc_hubbard(Nx=Nx, Ny=Ny, N_up=N_up, N_dn=N_dn, U=U, t=t,
+                                    n_samples=sweep_samples, max_iter=15, seed=42 + sd)
+                    energies.append(r["energy_per_site"])
+                    gs.append(r["optimal_g"])
+                    stderrs.append(r["energy_stderr"])
+                import statistics
+                sweep_data.append({
+                    "U": U,
+                    "energy_per_site": statistics.mean(energies),
+                    "optimal_g": statistics.mean(gs),
+                    "energy_stderr": statistics.mean(stderrs),
+                    "n_seeds": seeds_per_point,
+                })
+            return {
+                "algorithm": "VMC_Hubbard",
+                "Nx": Nx, "Ny": Ny, "N": N,
+                "N_up": N_up, "N_dn": N_dn,
+                "t": t,
+                "fill": fill,
+                "n_samples": n_samples,
+                "sweep": sweep_data,
+            }
+
+        # single-point mode
+        U = float(params.get("U", 4.0))
+        r = vmc_hubbard(Nx=Nx, Ny=Ny, N_up=N_up, N_dn=N_dn, U=U, t=t,
+                        n_samples=n_samples, max_iter=int(params.get("max_iter", 30)))
+        if Nx * Ny <= 4 and N_up + N_dn <= 2:
+            try:
+                r["exact_energy"] = exact_hubbard_ground_energy(Nx=Nx, Ny=Ny, N_up=N_up, N_dn=N_dn, U=U, t=t)
+            except Exception:
+                pass
+        return r
+
+    if system_type == "dft":
+        N = int(params.get("N", 150))
+        L = float(params.get("L", 15.0))
+        n_electrons = int(params.get("n_electrons", 2))
+        potential = params.get("potential", "harmonic")
+        xc_alpha = float(params.get("xc_alpha", 0.5))
+        xc_beta = float(params.get("xc_beta", 0.05))
+        return solve_dft_1d(N=N, L=L, n_electrons=n_electrons,
+                            potential=potential, xc_alpha=xc_alpha, xc_beta=xc_beta)
+
     raise ValueError(f"unknown system_type: {system_type}")
+
+
+@app.post("/ask")
+def ask(payload: dict):
+    """Natural-language prompt → solver → result + narration.
+
+    Request: {"prompt": "show me quantum tunneling"}
+    Response: {intent, narration, result}
+    """
+    prompt = payload.get("prompt", "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    intent = parse_intent(prompt)
+    t0 = time.perf_counter()
+    try:
+        result = dispatch(intent["system_type"], intent["parameters"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    dt_ms = (time.perf_counter() - t0) * 1000
+    return {
+        "prompt": prompt,
+        "matched": intent["matched"],
+        "score": intent["score"],
+        "system_type": intent["system_type"],
+        "parameters": intent["parameters"],
+        "narration": intent["narration"],
+        "compute_time_ms": dt_ms,
+        "result": result,
+    }
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "runs_in_memory": len(HISTORY)}
+    return {"status": "ok", "runs_in_memory": len(HISTORY), "runs_in_db": count_runs()}
 
 
 @app.post("/simulations/run")
@@ -80,20 +410,18 @@ def run_simulation(req: RunRequest):
         "result": result,
     }
     HISTORY.append(record)
+    insert_run(run_id, req.system_type, "completed", req.parameters, result, dt_ms)
     return record
 
 
 @app.get("/simulations/history")
-def history(limit: int = Query(20, ge=1, le=100)):
-    items = list(HISTORY)[-limit:]
-    items.reverse()
-    return [
-        {
-            "id": r["id"],
-            "system_type": r["system_type"],
-            "status": r["status"],
-            "parameters": r["parameters"],
-            "compute_time_ms": r["compute_time_ms"],
-        }
-        for r in items
-    ]
+def history(limit: int = Query(20, ge=1, le=100), system: str = Query(None)):
+    return list_runs(limit=limit, system_type=system)
+
+
+@app.get("/runs/{run_id}")
+def fetch_run(run_id: str):
+    r = get_run(run_id)
+    if r is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+    return r
