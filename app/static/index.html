@@ -84,6 +84,31 @@
         <div style="font-size:11px; color:#8b949e; margin-top:8px; margin-bottom:4px;">override parameters (JSON)</div>
         <input id="compareParams" type="text" placeholder='{"Z": 2, "n_max": 4}' style="width:100%; padding:6px; font-size:11px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:4px;">
       </div>
+    <div style="margin-top:12px; padding-top:12px; border-top:1px solid #21262d;">
+      <label style="display:flex; align-items:center; gap:8px; font-size:12px; color:#8b949e; cursor:pointer;">
+        <input type="checkbox" id="sweepToggle" style="width:auto;">
+        sweep mode — animate a parameter through a range
+      </label>
+      <div id="sweepPanel" style="display:none; margin-top:10px;">
+        <div style="font-size:11px; color:#8b949e; margin-bottom:4px;">parameter</div>
+        <select id="sweepParam" style="width:100%; padding:6px; font-size:12px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:4px;"></select>
+        <div style="display:flex; gap:6px; margin-top:8px;">
+          <div style="flex:1;">
+            <div style="font-size:11px; color:#8b949e; margin-bottom:4px;">from</div>
+            <input id="sweepFrom" type="number" value="1.0" step="0.1" style="width:100%; padding:6px; font-size:11px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:4px;">
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:11px; color:#8b949e; margin-bottom:4px;">to</div>
+            <input id="sweepTo" type="number" value="4.0" step="0.1" style="width:100%; padding:6px; font-size:11px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:4px;">
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:11px; color:#8b949e; margin-bottom:4px;">steps</div>
+            <input id="sweepSteps" type="number" value="20" step="1" min="5" max="100" style="width:100%; padding:6px; font-size:11px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:4px;">
+          </div>
+        </div>
+        <button id="sweepBtn" style="margin-top:8px; width:100%; padding:8px; font-size:12px; background:#238636;">start sweep</button>
+      </div>
+    </div>
     </div>
   </div>
 
@@ -1994,6 +2019,24 @@ function editorHide() {
     }
   });
   console.log("[editor] wired buttons OK");
+  const $sweepToggle = document.getElementById("sweepToggle");
+  if ($sweepToggle) {
+    $sweepToggle.addEventListener("change", () => {
+      document.getElementById("sweepPanel").style.display =
+        $sweepToggle.checked ? "block" : "none";
+      if ($sweepToggle.checked) populateSweepParams();
+    });
+  }
+  const $sweepBtn = document.getElementById("sweepBtn");
+  if ($sweepBtn) {
+    $sweepBtn.addEventListener("click", runSweep);
+  }
+  // Repopulate sweep params when the system changes
+  $sys.addEventListener("change", () => {
+    if (document.getElementById("sweepToggle").checked) {
+      populateSweepParams();
+    }
+  });
   const $cmpToggle = document.getElementById("compareToggle");
   if ($cmpToggle) {
     $cmpToggle.addEventListener("change", () => {
@@ -2557,6 +2600,156 @@ function drawCompare(resA, resB, sysA, sysB, paramsA, paramsB) {
   $raw.textContent = JSON.stringify({ A: resA, B: resB }, null, 2);
 }
 
+
+// ============================================================
+// Sweep mode — animate a parameter through a range
+// ============================================================
+
+let sweepResults = [];
+let sweepValues = [];
+let sweepParamName = "";
+let sweepCurrentFrame = 0;
+let sweepPlaying = false;
+let sweepTimer = null;
+
+function populateSweepParams() {
+  // Get the current solver's parameter names
+  const sys = $sys.value;
+  const params = PARAMS[sys] || [];
+  const $sel = document.getElementById("sweepParam");
+  $sel.innerHTML = "";
+  for (const p of params) {
+    if (p.type === "select" || p.type === "text") continue; // skip non-numeric
+    const opt = document.createElement("option");
+    opt.value = p.name;
+    opt.textContent = `${p.name} (${p.label})`;
+    $sel.appendChild(opt);
+  }
+}
+
+async function runSweep() {
+  const paramName = document.getElementById("sweepParam").value;
+  const from = parseFloat(document.getElementById("sweepFrom").value);
+  const to = parseFloat(document.getElementById("sweepTo").value);
+  const steps = parseInt(document.getElementById("sweepSteps").value, 10);
+
+  if (!paramName) {
+    $err.textContent = "no sweep parameter selected";
+    return;
+  }
+  if (isNaN(from) || isNaN(to) || steps < 2) {
+    $err.textContent = "invalid sweep range";
+    return;
+  }
+
+  const sys = $sys.value;
+  const baseParams = collectParams();
+
+  $err.textContent = "";
+  document.getElementById("sweepBtn").textContent = `running ${steps} steps…`;
+  document.getElementById("sweepBtn").disabled = true;
+
+  sweepResults = [];
+  sweepValues = [];
+  sweepParamName = paramName;
+
+  try {
+    // Run all steps in parallel (limited concurrency)
+    const values = [];
+    for (let i = 0; i < steps; i++) {
+      values.push(from + (to - from) * i / (steps - 1));
+    }
+
+    // Run in batches of 5 to avoid overwhelming the server
+    const BATCH = 5;
+    for (let b = 0; b < values.length; b += BATCH) {
+      const batch = values.slice(b, b + BATCH);
+      const promises = batch.map(v => {
+        const params = { ...baseParams, [paramName]: v };
+        return fetch("/simulations/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ system_type: sys, parameters: params }),
+        }).then(r => r.json());
+      });
+      const results = await Promise.all(promises);
+      for (const r of results) {
+        if (r.status === "completed") {
+          sweepResults.push(r);
+          sweepValues.push(r.parameters[paramName]);
+        }
+      }
+      document.getElementById("sweepBtn").textContent = `${sweepResults.length}/${steps} steps…`;
+    }
+
+    if (sweepResults.length === 0) {
+      throw new Error("no results");
+    }
+
+    // Start the animation
+    sweepCurrentFrame = 0;
+    animateSweepFrame(0);
+
+    // Show playback controls
+    document.getElementById("anim").style.display = "block";
+    document.getElementById("scrub").max = sweepResults.length - 1;
+    document.getElementById("scrub").value = 0;
+
+    $meta.textContent = `sweep: ${paramName} from ${from} to ${to} (${sweepResults.length} steps)`;
+    $raw.textContent = JSON.stringify({
+      parameter: paramName,
+      values: sweepValues,
+      results: sweepResults.map(r => ({
+        params: r.parameters,
+        compute_time_ms: r.compute_time_ms,
+        // include summary only, not full wavefunctions
+      })),
+    }, null, 2);
+  } catch (e) {
+    $err.textContent = "sweep error: " + e.message;
+  } finally {
+    document.getElementById("sweepBtn").textContent = "start sweep";
+    document.getElementById("sweepBtn").disabled = false;
+  }
+}
+
+function animateSweepFrame(idx) {
+  if (!sweepResults.length) return;
+  sweepCurrentFrame = idx;
+  const result = sweepResults[idx];
+  const val = sweepValues[idx];
+  lastResult = result.result;
+  lastCircuitSpec = null;
+
+  // Clear and draw
+  draw(result.result);
+
+  // Update meta
+  $meta.textContent = `${sweepParamName} = ${val.toFixed(3)}  ·  frame ${idx + 1}/${sweepResults.length}  ·  ${result.compute_time_ms.toFixed(1)} ms`;
+
+  // Update frame info
+  const $info = document.getElementById("frameInfo");
+  if ($info) {
+    $info.textContent = `${sweepParamName} = ${val.toFixed(3)}  ·  ${idx + 1}/${sweepResults.length}`;
+  }
+  const $scrub = document.getElementById("scrub");
+  if ($scrub) $scrub.value = idx;
+}
+
+function playSweep() {
+  if (!sweepResults.length) return;
+  sweepPlaying = true;
+  const fps = 6; // 6 frames per second
+  sweepTimer = setInterval(() => {
+    if (sweepCurrentFrame >= sweepResults.length - 1) {
+      sweepCurrentFrame = 0;
+    } else {
+      sweepCurrentFrame++;
+    }
+    animateSweepFrame(sweepCurrentFrame);
+  }, 1000 / fps);
+}
+
 // ---- animation player wiring ----
 (function() {
   const $play = document.getElementById("playBtn");
@@ -2591,6 +2784,10 @@ function drawCompare(resA, resB, sysA, sysB, paramsA, paramsB) {
     }
   });
   $scrub.addEventListener("input", (e) => {
+    if (sweepResults && sweepResults.length > 0) {
+      animateSweepFrame(parseInt(e.target.value, 10));
+      return;
+    }
     if (latticeFrames) {
       latticeCurrentFrame = parseInt(e.target.value, 10);
       drawLatticeFrame(latticeCurrentFrame);
