@@ -2296,6 +2296,13 @@ async function askQuestion() {
     lastRunId = null;
     lastCircuitSpec = null;
     const line = draw(data.result);
+    {
+      const u = new URLSearchParams(location.search);
+      u.set("ask", prompt);
+      u.delete("scenario");
+      u.delete("run");
+      history.replaceState(null, "", "?" + u.toString());
+    }
     $meta.textContent = `ask: "${prompt}" → ${data.system_type} (${data.compute_time_ms.toFixed(1)} ms)`;
     $raw.textContent = JSON.stringify(data, null, 2);
     // Show narration
@@ -2339,6 +2346,13 @@ async function runScenario(id) {
     scenarioMeta = data;
     scenarioCurrentStep = 0;
 
+    {
+      const u = new URLSearchParams(location.search);
+      u.set("scenario", id);
+      u.delete("ask");
+      u.delete("run");
+      history.replaceState(null, "", "?" + u.toString());
+    }
     document.getElementById("scenarioTitle").textContent = data.title;
     document.getElementById("scenarioStep").textContent = `(${data.steps.length} steps · ${data.total_compute_ms.toFixed(0)} ms)`;
 
@@ -2452,11 +2466,32 @@ $run.addEventListener("click", runSim);
   renderParams();
   clearCanvas();
   refreshHistory();
-  const loaded = await loadRunFromURL();
-  if (!loaded) {
-    loadFromURL();
-    runSim();
+
+  const q = new URLSearchParams(location.search);
+
+  // Priority 1: ?scenario=<id> -- run a curated multi-step workflow
+  const scenarioId = q.get("scenario");
+  if (scenarioId) {
+    await runScenario(scenarioId);
+    return;
   }
+
+  // Priority 2: ?ask=<prompt> -- run the intent parser
+  const askPrompt = q.get("ask");
+  if (askPrompt) {
+    const inp = document.getElementById("askInput");
+    if (inp) inp.value = askPrompt;
+    await askQuestion();
+    return;
+  }
+
+  // Priority 3: ?run=<uuid> -- load a specific past run
+  const loaded = await loadRunFromURL();
+  if (loaded) return;
+
+  // Fallback: default particle run
+  loadFromURL();
+  runSim();
 })();
 </script>
 <script>
