@@ -53,6 +53,60 @@
 <body>
 <header><h1>QEN <span>·</span> Quantum Equation Nexus</h1></header>
 <main>
+  <!-- ============================================ -->
+  <!-- QEN Studio — natural language + scenarios    -->
+  <!-- ============================================ -->
+  <div id="studioPanel" style="margin-bottom:16px; padding:14px; background:#161b22; border:1px solid #30363d; border-radius:8px;">
+    <div style="font-size:13px; color:#8b949e; margin-bottom:6px;">ask QEN</div>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <input id="askInput" type="text" placeholder="show me quantum tunneling" style="flex:1; padding:10px; font-size:14px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:6px;">
+      <button id="askBtn" style="padding:10px 18px; width:auto; background:#238636;">ask</button>
+    </div>
+    <div style="font-size:12px; color:#8b949e; margin-bottom:6px;">or explore</div>
+    <div id="scenarioButtons" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+  </div>
+
+  <!-- scenario step navigation -->
+  <div id="scenarioNav" style="display:none; margin-bottom:12px; padding:10px; background:#161b22; border:1px solid #30363d; border-radius:6px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div style="font-size:13px; color:#e6edf3;" id="scenarioTitle"></div>
+      <div style="font-size:12px; color:#8b949e;" id="scenarioStep"></div>
+    </div>
+    <div id="scenarioNarration" style="font-size:13px; color:#8b949e; line-height:1.5; margin-bottom:8px;"></div>
+    <div style="display:flex; gap:6px;">
+      <button id="scenarioPrev" style="background:#21262d; width:auto; padding:6px 12px;">← prev</button>
+      <button id="scenarioNext" style="background:#21262d; width:auto; padding:6px 12px;">next →</button>
+    </div>
+  </div>
+
+  
+  <!-- ============================================ -->
+  <!-- QEN Studio — natural language + scenarios    -->
+  <!-- ============================================ -->
+  <div id="studioPanel" style="margin-bottom:16px; padding:14px; background:#161b22; border:1px solid #30363d; border-radius:8px;">
+    <div style="font-size:13px; color:#8b949e; margin-bottom:6px;">ask QEN</div>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <input id="askInput" type="text" placeholder="show me quantum tunneling" style="flex:1; padding:10px; font-size:14px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:6px;">
+      <button id="askBtn" style="padding:10px 18px; width:auto; background:#238636;">ask</button>
+    </div>
+    <div style="font-size:12px; color:#8b949e; margin-bottom:6px;">or explore</div>
+    <div id="scenarioButtons" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+  </div>
+
+  <!-- scenario step navigation -->
+  <div id="scenarioNav" style="display:none; margin-bottom:12px; padding:10px; background:#161b22; border:1px solid #30363d; border-radius:6px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div style="font-size:13px; color:#e6edf3;" id="scenarioTitle"></div>
+      <div style="font-size:12px; color:#8b949e;" id="scenarioStep"></div>
+    </div>
+    <div id="scenarioNarration" style="font-size:13px; color:#8b949e; line-height:1.5; margin-bottom:8px;"></div>
+    <div style="display:flex; gap:6px;">
+      <button id="scenarioPrev" style="background:#21262d; width:auto; padding:6px 12px;">← prev</button>
+      <button id="scenarioNext" style="background:#21262d; width:auto; padding:6px 12px;">next →</button>
+    </div>
+  </div>
+
+  
   <div class="row">
     <div>
       <label for="system">system</label>
@@ -2195,6 +2249,146 @@ async function exportGIF() {
   $btn.disabled = false;
   $meta.textContent += "  ·  GIF saved (" + Math.round(gifBytes.length / 1024) + " KB)";
 }
+
+
+// ============================================================
+// QEN Studio — ask + scenarios
+// ============================================================
+
+let scenarioSteps = [];
+let scenarioCurrentStep = 0;
+let scenarioMeta = null;
+
+async function loadStudio() {
+  // Load scenario buttons
+  try {
+    const res = await fetch("/scenarios");
+    const items = await res.json();
+    const $btns = document.getElementById("scenarioButtons");
+    $btns.innerHTML = "";
+    for (const sc of items) {
+      const b = document.createElement("button");
+      b.textContent = sc.title;
+      b.style.cssText = "background:#21262d; color:#e6edf3; border:1px solid #30363d; border-radius:4px; padding:6px 10px; font-size:12px; cursor:pointer;";
+      b.addEventListener("click", () => runScenario(sc.id));
+      $btns.appendChild(b);
+    }
+  } catch (e) {
+    console.warn("scenarios failed to load", e);
+  }
+}
+
+async function askQuestion() {
+  const prompt = document.getElementById("askInput").value.trim();
+  if (!prompt) return;
+  document.getElementById("askBtn").textContent = "asking…";
+  document.getElementById("askBtn").disabled = true;
+  try {
+    const res = await fetch("/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "ask failed");
+    // Render the result on the canvas
+    lastResult = data.result;
+    lastRunId = null;
+    lastCircuitSpec = null;
+    const line = draw(data.result);
+    $meta.textContent = `ask: "${prompt}" → ${data.system_type} (${data.compute_time_ms.toFixed(1)} ms)`;
+    $raw.textContent = JSON.stringify(data, null, 2);
+    // Show narration
+    showNarration(data.system_type, data.narration, [data.result]);
+  } catch (e) {
+    $err.textContent = "ask error: " + e.message;
+  } finally {
+    document.getElementById("askBtn").textContent = "ask";
+    document.getElementById("askBtn").disabled = false;
+  }
+}
+
+function showNarration(title, text, steps) {
+  const nav = document.getElementById("scenarioNav");
+  nav.style.display = "block";
+  document.getElementById("scenarioTitle").textContent = title;
+  document.getElementById("scenarioStep").textContent = "";
+  document.getElementById("scenarioNarration").textContent = text;
+  document.getElementById("scenarioPrev").style.display = "none";
+  document.getElementById("scenarioNext").style.display = "none";
+  scenarioSteps = steps;
+  scenarioCurrentStep = 0;
+}
+
+async function runScenario(id) {
+  const nav = document.getElementById("scenarioNav");
+  nav.style.display = "block";
+  document.getElementById("scenarioTitle").textContent = "loading…";
+  document.getElementById("scenarioStep").textContent = "";
+  document.getElementById("scenarioNarration").textContent = "";
+  document.getElementById("scenarioPrev").style.display = "none";
+  document.getElementById("scenarioNext").style.display = "none";
+
+  try {
+    const res = await fetch(`/scenarios/${id}/run`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "scenario failed");
+
+    // Collect all steps
+    scenarioSteps = data.steps;
+    scenarioMeta = data;
+    scenarioCurrentStep = 0;
+
+    document.getElementById("scenarioTitle").textContent = data.title;
+    document.getElementById("scenarioStep").textContent = `(${data.steps.length} steps · ${data.total_compute_ms.toFixed(0)} ms)`;
+
+    renderScenarioStep(0);
+  } catch (e) {
+    document.getElementById("scenarioNarration").textContent = "scenario error: " + e.message;
+  }
+}
+
+function renderScenarioStep(idx) {
+  if (!scenarioSteps.length) return;
+  const step = scenarioSteps[idx];
+  scenarioCurrentStep = idx;
+
+  // Update nav
+  document.getElementById("scenarioStep").textContent = `step ${idx + 1} of ${scenarioSteps.length}`;
+  document.getElementById("scenarioPrev").style.display = idx > 0 ? "inline-block" : "none";
+  document.getElementById("scenarioNext").style.display = idx < scenarioSteps.length - 1 ? "inline-block" : "none";
+
+  if (step.kind === "note") {
+    document.getElementById("scenarioNarration").textContent = step.text;
+  } else if (step.kind === "solve") {
+    document.getElementById("scenarioNarration").textContent = `Computing ${step.solver}...`;
+    // Render the result
+    lastResult = step.result;
+    lastCircuitSpec = null;
+    const line = draw(step.result);
+    $meta.textContent = `${step.solver} · ${step.compute_time_ms.toFixed(1)} ms · ${line}`;
+    $raw.textContent = JSON.stringify(step.result, null, 2);
+    // If the previous step was a note, show it as context
+    const prevNote = scenarioSteps.slice(0, idx).reverse().find(s => s.kind === "note");
+    document.getElementById("scenarioNarration").textContent = prevNote ? prevNote.text : "";
+  } else if (step.kind === "error") {
+    document.getElementById("scenarioNarration").textContent = "Error: " + step.detail;
+  }
+}
+
+document.getElementById("askBtn").addEventListener("click", askQuestion);
+document.getElementById("askInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") askQuestion();
+});
+document.getElementById("scenarioPrev").addEventListener("click", () => {
+  if (scenarioCurrentStep > 0) renderScenarioStep(scenarioCurrentStep - 1);
+});
+document.getElementById("scenarioNext").addEventListener("click", () => {
+  if (scenarioCurrentStep < scenarioSteps.length - 1) renderScenarioStep(scenarioCurrentStep + 1);
+});
+
+// Load scenarios after the page is ready
+setTimeout(loadStudio, 200);
 
 // ---- animation player wiring ----
 (function() {
