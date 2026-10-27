@@ -162,8 +162,24 @@ def i18n_strings(lang: str):
 
 
 @app.get("/")
-def index():
-    return FileResponse("app/static/index.html")
+def landing():
+    """Landing page -- curated scenarios, ask box, links."""
+    from fastapi.responses import FileResponse
+    resp = FileResponse("app/static/landing.html")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
+
+
+@app.get("/studio")
+def studio():
+    """Full technical UI -- all solvers, all parameters."""
+    from fastapi.responses import FileResponse
+    resp = FileResponse("app/static/index.html")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
 
 init_db()
 HISTORY: deque = deque(maxlen=100)  # kept for backward compat; DB is authoritative

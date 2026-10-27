@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QEN · Quantum Equation Nexus</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; }
+  header { padding: 60px 20px 40px; text-align: center; border-bottom: 1px solid #21262d; }
+  h1 { margin: 0 0 8px; font-size: 32px; font-weight: 700; }
+  h1 span { color: #58a6ff; }
+  .tagline { font-size: 15px; color: #8b949e; margin: 0; }
+  main { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+  .ask-box { display: flex; gap: 8px; margin-bottom: 40px; }
+  .ask-box input {
+    flex: 1; padding: 14px 18px; font-size: 16px;
+    background: #161b22; color: #e6edf3;
+    border: 1px solid #30363d; border-radius: 8px;
+  }
+  .ask-box button {
+    padding: 14px 24px; font-size: 16px; font-weight: 600;
+    background: #238636; color: #fff; border: 0; border-radius: 8px; cursor: pointer;
+  }
+  .ask-box button:hover { background: #2ea043; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; color: #8b949e; margin: 0 0 16px; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+  .card {
+    display: block; padding: 20px; text-decoration: none; color: inherit;
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .card:hover { border-color: #58a6ff; transform: translateY(-2px); }
+  .card-title { font-size: 16px; font-weight: 600; color: #e6edf3; margin-bottom: 8px; }
+  .card-desc { font-size: 13px; line-height: 1.5; color: #8b949e; }
+  .card-cta { font-size: 12px; color: #58a6ff; margin-top: 12px; font-weight: 500; }
+  footer { text-align: center; padding: 40px 20px; color: #8b949e; font-size: 12px; border-top: 1px solid #21262d; }
+  footer a { color: #58a6ff; text-decoration: none; }
+  .stats { display: flex; justify-content: center; gap: 24px; margin-top: 20px; font-size: 12px; color: #8b949e; }
+  .stats b { color: #e6edf3; font-weight: 600; }
+  .loading { text-align: center; color: #8b949e; padding: 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>QEN <span>·</span> Quantum Equation Nexus</h1>
+  <p class="tagline">Explore quantum physics on your phone</p>
+  <div class="stats" id="stats"></div>
+</header>
+<main>
+  <form class="ask-box" id="askForm">
+    <input type="text" id="askInput" placeholder="show me quantum tunneling" autocomplete="off">
+    <button type="submit">ask</button>
+  </form>
+
+  <h2>Featured scenarios</h2>
+  <div class="grid" id="scenarios">
+    <div class="loading">loading scenarios…</div>
+  </div>
+</main>
+<footer>
+  Built with Python, numpy, and no cloud. Runs on a phone.<br>
+  <a href="/studio">advanced mode</a> · <a href="https://github.com/James256bot/qen" target="_blank">GitHub</a>
+</footer>
+<script>
+  async function loadScenarios() {
+    try {
+      const res = await fetch("/scenarios");
+      const items = await res.json();
+      const $grid = document.getElementById("scenarios");
+      $grid.innerHTML = "";
+      for (const sc of items) {
+        const a = document.createElement("a");
+        a.className = "card";
+        a.href = "/studio?scenario=" + encodeURIComponent(sc.id);
+        a.innerHTML = `
+          <div class="card-title">${sc.title}</div>
+          <div class="card-desc">${sc.description}</div>
+          <div class="card-cta">explore →</div>
+        `;
+        $grid.appendChild(a);
+      }
+      document.getElementById("stats").innerHTML = `
+        <span><b>${items.length}</b> scenarios</span>
+        <span><b>16</b> intents</span>
+        <span><b>14</b> solvers</span>
+      `;
+    } catch (e) {
+      document.getElementById("scenarios").innerHTML =
+        '<div class="loading">failed to load scenarios</div>';
+    }
+  }
+
+  document.getElementById("askForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = document.getElementById("askInput").value.trim();
+    if (q) {
+      location.href = "/studio?ask=" + encodeURIComponent(q);
+    }
+  });
+
+  loadScenarios();
+</script>
+</body>
+</html>
