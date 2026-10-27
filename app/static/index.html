@@ -64,6 +64,27 @@
     </div>
     <div style="font-size:12px; color:#8b949e; margin-bottom:6px;">or explore</div>
     <div id="scenarioButtons" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+    <div style="margin-top:12px; padding-top:12px; border-top:1px solid #21262d;">
+      <label style="display:flex; align-items:center; gap:8px; font-size:12px; color:#8b949e; cursor:pointer;">
+        <input type="checkbox" id="compareToggle" style="width:auto;">
+        compare mode — run two solvers side by side
+      </label>
+      <div id="comparePanel" style="display:none; margin-top:10px;">
+        <div style="font-size:11px; color:#8b949e; margin-bottom:4px;">second solver</div>
+        <select id="compareSolver" style="width:100%; padding:6px; font-size:12px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:4px;">
+          <option value="hydrogen">hydrogen atom</option>
+          <option value="particle">particle in a box</option>
+          <option value="oscillator">harmonic oscillator</option>
+          <option value="finite_well">finite square well</option>
+          <option value="box2d">2D box</option>
+          <option value="box3d">3D box</option>
+          <option value="n2">N₂ molecule</option>
+          <option value="circuit">quantum circuit</option>
+        </select>
+        <div style="font-size:11px; color:#8b949e; margin-top:8px; margin-bottom:4px;">override parameters (JSON)</div>
+        <input id="compareParams" type="text" placeholder='{"Z": 2, "n_max": 4}' style="width:100%; padding:6px; font-size:11px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; border-radius:4px;">
+      </div>
+    </div>
   </div>
 
   <!-- scenario step navigation -->
@@ -1603,6 +1624,11 @@ document.addEventListener("change", (e) => {
 });
 
 async function runSim() {
+  const cmp = document.getElementById("compareToggle");
+  if (cmp && cmp.checked) {
+    return runCompare();
+  }
+
   $err.textContent = "";
   $run.disabled = true;
   $run.textContent = "running…";
@@ -1968,6 +1994,13 @@ function editorHide() {
     }
   });
   console.log("[editor] wired buttons OK");
+  const $cmpToggle = document.getElementById("compareToggle");
+  if ($cmpToggle) {
+    $cmpToggle.addEventListener("change", () => {
+      document.getElementById("comparePanel").style.display =
+        $cmpToggle.checked ? "block" : "none";
+    });
+  }
 })();
 
 
@@ -2403,6 +2436,126 @@ document.getElementById("scenarioNext").addEventListener("click", () => {
 
 // Load scenarios after the page is ready
 setTimeout(loadStudio, 200);
+
+
+// ============================================================
+// Compare mode — render two solver results side by side
+// ============================================================
+
+async function runCompare() {
+  const sysA = $sys.value;
+  const paramsA = collectParams();
+  const sysB = document.getElementById("compareSolver").value;
+  let paramsB = {};
+  const rawB = document.getElementById("compareParams").value.trim();
+  if (rawB) {
+    try { paramsB = JSON.parse(rawB); }
+    catch (e) {
+      $err.textContent = "invalid JSON in compare params";
+      return;
+    }
+  }
+
+  $err.textContent = "";
+  $run.disabled = true;
+  $run.textContent = "running compare…";
+
+  try {
+    // Run both solvers in parallel
+    const [resA, resB] = await Promise.all([
+      fetch("/simulations/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system_type: sysA, parameters: paramsA }),
+      }).then(r => r.json()),
+      fetch("/simulations/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system_type: sysB, parameters: paramsB }),
+      }).then(r => r.json()),
+    ]);
+
+    if (resA.status !== "completed" || resB.status !== "completed") {
+      throw new Error("one of the solvers failed");
+    }
+
+    drawCompare(resA, resB, sysA, sysB, paramsA, paramsB);
+  } catch (e) {
+    $err.textContent = "compare error: " + e.message;
+  } finally {
+    $run.disabled = false;
+    $run.textContent = "run simulation";
+  }
+}
+
+function drawCompare(resA, resB, sysA, sysB, paramsA, paramsB) {
+  const W = canvas.width, H = canvas.height;
+  const halfW = Math.floor(W / 2) - 6;
+
+  // Save the original canvas state
+  const origCanvas = canvas;
+  const origCtx = ctx;
+
+  // Create two off-screen canvases, run each renderer on them, then blit to main
+  function renderToOffscreen(result, drawFn, width, height) {
+    const off = document.createElement("canvas");
+    off.width = width;
+    off.height = height;
+    // Temporarily swap the global canvas and ctx
+    const oldCanvas = window.canvas;
+    const oldCtx = window.ctx;
+    window.canvas = off;
+    window.ctx = off.getContext("2d");
+    // Also swap the module-level references used inside renderers
+    // (they refer to the `canvas` and `ctx` identifiers directly)
+    // We rely on `canvas` and `ctx` being global `var`/`let` or `const` at module scope.
+    try {
+      drawFn(result);
+    } catch (e) {
+      console.warn("renderer error in compare:", e);
+    }
+    // restore
+    window.canvas = oldCanvas;
+    window.ctx = oldCtx;
+    return off;
+  }
+
+  // Clear the main canvas
+  ctx.fillStyle = "#161b22";
+  ctx.fillRect(0, 0, W, H);
+
+  // Headers
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "12px ui-monospace, monospace";
+  ctx.fillText(`A: ${sysA}`, 10, 16);
+  ctx.fillText(`B: ${sysB}`, halfW + 20, 16);
+
+  // Divider
+  ctx.strokeStyle = "#30363d";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(halfW + 10, 0);
+  ctx.lineTo(halfW + 10, H);
+  ctx.stroke();
+
+  // For each result, render to offscreen and blit
+  const renderedA = renderToOffscreen(resA.result, draw, halfW - 4, H - 30);
+  const renderedB = renderToOffscreen(resB.result, draw, halfW - 4, H - 30);
+  ctx.drawImage(renderedA, 6, 26);
+  ctx.drawImage(renderedB, halfW + 16, 26);
+
+  // Meta line
+  $legend.innerHTML = "";
+  const el1 = document.createElement("span");
+  el1.innerHTML = `<b>A</b>: ${resA.system_type} (${resA.compute_time_ms.toFixed(1)} ms)`;
+  $legend.appendChild(el1);
+  const el2 = document.createElement("span");
+  el2.innerHTML = `<b>B</b>: ${resB.system_type} (${resB.compute_time_ms.toFixed(1)} ms)`;
+  $legend.appendChild(el2);
+
+  $meta.textContent = `compare: ${sysA} vs ${sysB} · A=${resA.compute_time_ms.toFixed(0)} ms, B=${resB.compute_time_ms.toFixed(0)} ms`;
+  $raw.textContent = JSON.stringify({ A: resA, B: resB }, null, 2);
+}
 
 // ---- animation player wiring ----
 (function() {
