@@ -86,12 +86,24 @@ def overlap_3d(a, lmn1, A, b, lmn2, B):
 def kinetic_3d(a, lmn1, A, b, lmn2, B):
     """3D kinetic energy of two primitive Gaussians.
 
-    T = T_x + T_y + T_z, where each T_x is a combination of overlap derivatives.
+    For s orbitals (lmn1 = lmn2 = (0,0,0)):
+        T = S · (ab/p) · (3 − 2·ab/p·|A-B|²)
+
+    where S = overlap integral.
+
+    For p and higher, we fall back to the general component formula.
     """
+    # s-s case: use the closed form
+    if lmn1 == (0, 0, 0) and lmn2 == (0, 0, 0):
+        p, P = gaussian_product_center(a, A, b, B)
+        AB2 = np.dot(A - B, A - B)
+        S = overlap_3d(a, lmn1, A, b, lmn2, B)
+        return S * (a * b / p) * (3.0 - 2.0 * a * b / p * AB2)
+
+    # For p orbitals and beyond, use the component form (fallback)
     p, P = gaussian_product_center(a, A, b, B)
     AB2 = np.dot(A - B, A - B)
     gpf = np.exp(-a * b / p * AB2)
-
     PA = P - A
     PB = P - B
 
