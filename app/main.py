@@ -149,6 +149,111 @@ def circuit_detail(name: str):
     return CANONICAL_CIRCUITS[name]
 
 
+@app.get("/screen/all")
+def screen_all():
+    """Run all virtual screens and return a unified dashboard.
+
+    Runs drug screening, battery screening, carbon screening, and
+    QML classification in parallel where possible.
+    """
+    import time
+    from app.solvers.drugs import screen_library
+    from app.solvers.electrolyte import screen_electrolytes
+    from app.solvers.carbon import screen_mofs
+    from app.solvers.qml import classify as qml_classify
+    from app.solvers.portfolio import optimize_portfolio
+
+    t_total = time.perf_counter()
+    results = {}
+
+    # Drug screening against COX-2
+    try:
+        t0 = time.perf_counter()
+        drug = screen_library(receptor_id="COX-2")
+        results["drug"] = {
+            "status": "completed",
+            "time_ms": (time.perf_counter() - t0) * 1000,
+            "result": drug,
+        }
+    except Exception as e:
+        results["drug"] = {"status": "error", "detail": str(e)}
+
+    # Battery screening
+    try:
+        t0 = time.perf_counter()
+        battery = screen_electrolytes()
+        results["battery"] = {
+            "status": "completed",
+            "time_ms": (time.perf_counter() - t0) * 1000,
+            "result": battery,
+        }
+    except Exception as e:
+        results["battery"] = {"status": "error", "detail": str(e)}
+
+    # Carbon screening
+    try:
+        t0 = time.perf_counter()
+        carbon = screen_mofs()
+        results["carbon"] = {
+            "status": "completed",
+            "time_ms": (time.perf_counter() - t0) * 1000,
+            "result": carbon,
+        }
+    except Exception as e:
+        results["carbon"] = {"status": "error", "detail": str(e)}
+
+    # QML classification
+    try:
+        t0 = time.perf_counter()
+        qml = qml_classify(dataset="iris", n_qubits=4, test_frac=0.3)
+        results["qml"] = {
+            "status": "completed",
+            "time_ms": (time.perf_counter() - t0) * 1000,
+            "result": qml,
+        }
+    except Exception as e:
+        results["qml"] = {"status": "error", "detail": str(e)}
+
+    # Portfolio optimization
+    try:
+        t0 = time.perf_counter()
+        portfolio = optimize_portfolio(
+            tickers=["AAPL", "MSFT", "GOOGL", "NVDA", "JPM", "GS"],
+            risk_tolerance=0.5, budget=2, p=2,
+        )
+        results["portfolio"] = {
+            "status": "completed",
+            "time_ms": (time.perf_counter() - t0) * 1000,
+            "result": portfolio,
+        }
+    except Exception as e:
+        results["portfolio"] = {"status": "error", "detail": str(e)}
+
+    total_ms = (time.perf_counter() - t_total) * 1000
+
+    # Get the H2 correction status
+    h2_corr = None
+    try:
+        from app.solvers.drugs import get_h2_correlation_correction
+        h2_corr = get_h2_correlation_correction()
+    except Exception:
+        pass
+
+    return {
+        "total_compute_ms": total_ms,
+        "h2_correction": h2_corr,
+        "screens": results,
+    }
+
+
+@app.get("/screen")
+def screen_page():
+    from fastapi.responses import FileResponse
+    resp = FileResponse("app/static/screen.html")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
+
+
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 @app.get("/lessons")

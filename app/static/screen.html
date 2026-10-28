@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QEN — Virtual Screening Dashboard</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
+  header { padding: 24px 20px; border-bottom: 1px solid #21262d; display: flex; justify-content: space-between; align-items: center; }
+  h1 { margin: 0; font-size: 20px; }
+  h1 span { color: #58a6ff; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 20px; }
+  button { padding: 12px 24px; font-size: 15px; font-weight: 600; background: #238636; color: #fff; border: 0; border-radius: 8px; cursor: pointer; }
+  button:disabled { background: #30363d; cursor: wait; }
+  button:hover:not(:disabled) { background: #2ea043; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 20px; margin-top: 24px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; }
+  .card h2 { margin: 0 0 4px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: #8b949e; font-weight: 600; }
+  .card .subtitle { margin: 0 0 16px; font-size: 12px; color: #8b949e; }
+  .ranked { list-style: none; padding: 0; margin: 0; }
+  .ranked li { display: grid; grid-template-columns: 24px 1fr 100px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
+  .ranked li:last-child { border-bottom: 0; }
+  .rank { color: #8b949e; font-weight: 600; }
+  .name { font-weight: 500; }
+  .name small { color: #8b949e; font-weight: 400; margin-left: 4px; font-size: 11px; }
+  .value { text-align: right; font-family: ui-monospace, monospace; font-size: 12px; color: #3fb950; }
+  .meta { margin-top: 16px; padding-top: 12px; border-top: 1px solid #21262d; font-size: 12px; color: #8b949e; }
+  .meta b { color: #e6edf3; }
+  .stats { display: flex; gap: 24px; font-size: 12px; color: #8b949e; }
+  .stats b { color: #e6edf3; font-weight: 600; }
+  .error { color: #f85149; font-size: 13px; }
+  .loading { text-align: center; padding: 40px; color: #8b949e; }
+  .badge { display: inline-block; padding: 2px 8px; background: #21262d; border-radius: 10px; font-size: 11px; color: #8b949e; margin-right: 6px; }
+  .badge.green { background: #23863622; color: #3fb950; }
+  .badge.blue { background: #58a6ff22; color: #58a6ff; }
+  .badge.purple { background: #a371f722; color: #a371f7; }
+</style>
+</head>
+<body>
+<header>
+  <h1>QEN <span>·</span> Virtual Screening Dashboard</h1>
+  <div>
+    <a href="/" style="color: #8b949e; text-decoration: none; margin-right: 16px; font-size: 13px;">home</a>
+    <a href="/studio" style="color: #8b949e; text-decoration: none; font-size: 13px;">studio</a>
+  </div>
+</header>
+<main>
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+    <div>
+      <div style="font-size: 16px; font-weight: 600; margin-bottom: 4px;">All virtual screens</div>
+      <div style="font-size: 13px; color: #8b949e;">Drug discovery, battery electrolytes, carbon capture, portfolio, QML — all at once</div>
+    </div>
+    <button id="runBtn">run all screens</button>
+  </div>
+
+  <div class="stats" id="stats" style="margin-top: 16px;"></div>
+
+  <div id="results" class="grid">
+    <div class="loading" style="grid-column: 1 / -1;">click "run all screens" to start</div>
+  </div>
+
+  <div id="h2status" style="margin-top: 24px; padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; font-size: 13px; display: none;">
+    <div style="color: #8b949e; margin-bottom: 4px;">H₂ quantum chemistry correction</div>
+    <div id="h2text" style="color: #e6edf3;"></div>
+  </div>
+</main>
+<script>
+const $run = document.getElementById("runBtn");
+const $results = document.getElementById("results");
+const $stats = document.getElementById("stats");
+const $h2status = document.getElementById("h2status");
+const $h2text = document.getElementById("h2text");
+
+$run.addEventListener("click", async () => {
+  $run.disabled = true;
+  $run.textContent = "running all screens...";
+  $results.innerHTML = '<div class="loading" style="grid-column: 1 / -1;">running... this may take 30-60 seconds on first call</div>';
+  $stats.innerHTML = "";
+  $h2status.style.display = "none";
+
+  try {
+    const t0 = performance.now();
+    const res = await fetch("/screen/all");
+    const data = await res.json();
+    const wall = (performance.now() - t0) / 1000;
+
+    renderAll(data, wall);
+  } catch (e) {
+    $results.innerHTML = `<div class="error" style="grid-column: 1 / -1;">error: ${e.message}</div>`;
+  } finally {
+    $run.disabled = false;
+    $run.textContent = "run all screens";
+  }
+});
+
+function renderAll(data, wall) {
+  const s = data.screens;
+
+  $stats.innerHTML = `
+    <span><b>${data.total_compute_ms.toFixed(0)}</b> ms server</span>
+    <span><b>${wall.toFixed(1)}</b> s wall</span>
+    <span><b>${Object.keys(s).length}</b> screens</span>
+  `;
+
+  if (data.h2_correction) {
+    $h2status.style.display = "block";
+    $h2text.innerHTML = `
+      <b>${data.h2_correction.correction_kcal.toFixed(2)} kcal/mol</b>
+      <span class="badge green">real</span>
+      from ${data.h2_correction.source}
+      <span class="badge">E_HF = ${data.h2_correction.E_HF?.toFixed(4)} Ha</span>
+      <span class="badge">E_VQE = ${data.h2_correction.E_VQE?.toFixed(4)} Ha</span>
+    `;
+  }
+
+  $results.innerHTML = "";
+
+  // Drug
+  if (s.drug && s.drug.status === "completed") {
+    const r = s.drug.result;
+    const rows = r.ranked.slice(0, 8).map((h, i) => `
+      <li>
+        <span class="rank">${i+1}</span>
+        <span class="name">${h.ligand_name}<small>${h.ligand_class}</small></span>
+        <span class="value">${h.binding_energy_kcal.toFixed(2)} kcal</span>
+      </li>
+    `).join("");
+    $results.innerHTML += `
+      <div class="card">
+        <h2>Drug discovery</h2>
+        <div class="subtitle">${r.n_ligands} drugs × ${r.receptor_name}</div>
+        <ul class="ranked">${rows}</ul>
+        <div class="meta">
+          <b>Top hit:</b> ${r.top_hit} (${r.top_binding_kcal.toFixed(2)} kcal/mol)<br>
+          <span class="badge green">real H₂ correction</span>
+          ${s.drug.time_ms.toFixed(0)} ms
+        </div>
+      </div>
+    `;
+  } else if (s.drug) {
+    $results.innerHTML += `<div class="card"><h2>Drug discovery</h2><div class="error">${s.drug.detail}</div></div>`;
+  }
+
+  // Battery
+  if (s.battery && s.battery.status === "completed") {
+    const r = s.battery.result;
+    const rows = r.ranked.map((e, i) => `
+      <li>
+        <span class="rank">${i+1}</span>
+        <span class="name">${e.name}<small>${e.formula}</small></span>
+        <span class="value">${e.gap_ev.toFixed(2)} eV</span>
+      </li>
+    `).join("");
+    $results.innerHTML += `
+      <div class="card">
+        <h2>Battery electrolytes</h2>
+        <div class="subtitle">${r.n_candidates} solvents, ranked by stability window</div>
+        <ul class="ranked">${rows}</ul>
+        <div class="meta">
+          <b>Recommended:</b> ${r.recommended}<br>
+          <span class="badge green">real H₂ correction</span>
+          ${s.battery.time_ms.toFixed(0)} ms
+        </div>
+      </div>
+    `;
+  }
+
+  // Carbon
+  if (s.carbon && s.carbon.status === "completed") {
+    const r = s.carbon.result;
+    const rows = r.ranked.map((m, i) => `
+      <li>
+        <span class="rank">${i+1}</span>
+        <span class="name">${m.name}<small>${m.metal}</small></span>
+        <span class="value">${m.adsorption_kj_mol.toFixed(1)} kJ</span>
+      </li>
+    `).join("");
+    $results.innerHTML += `
+      <div class="card">
+        <h2>Carbon capture MOFs</h2>
+        <div class="subtitle">${r.n_candidates} MOFs, ranked by CO₂ adsorption</div>
+        <ul class="ranked">${rows}</ul>
+        <div class="meta">
+          <b>Recommended:</b> ${r.recommended} (${r.recommended_name})<br>
+          ${s.carbon.time_ms.toFixed(0)} ms
+        </div>
+      </div>
+    `;
+  }
+
+  // Portfolio
+  if (s.portfolio && s.portfolio.status === "completed") {
+    const r = s.portfolio.result;
+    const opt = r.optimal_portfolio;
+    $results.innerHTML += `
+      <div class="card">
+        <h2>Portfolio optimization</h2>
+        <div class="subtitle">QAOA, ${r.n_stocks} stocks, budget ${r.budget}</div>
+        <div style="font-size: 14px; margin-bottom: 8px;">
+          <b>Optimal portfolio:</b> ${opt.selected.join(", ")}
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px;">
+          <div>Expected return: <b>${(opt.expected_return*100).toFixed(2)}%</b></div>
+          <div>Expected risk: <b>${(opt.expected_risk*100).toFixed(2)}%</b></div>
+          <div>Sharpe ratio: <b>${opt.sharpe_ratio.toFixed(3)}</b></div>
+          <div>Probability: <b>${(opt.probability*100).toFixed(1)}%</b></div>
+        </div>
+        <div class="meta">
+          <span class="badge blue">QAOA p=${r.p_layers}</span>
+          ${s.portfolio.time_ms.toFixed(0)} ms
+        </div>
+      </div>
+    `;
+  }
+
+  // QML
+  if (s.qml && s.qml.status === "completed") {
+    const r = s.qml.result;
+    $results.innerHTML += `
+      <div class="card">
+        <h2>Quantum ML classifier</h2>
+        <div class="subtitle">${r.dataset}, ${r.n_qubits} qubits</div>
+        <div style="font-size: 15px; margin: 8px 0;">
+          <b style="color: #3fb950;">${(r.accuracy*100).toFixed(1)}%</b>
+          <span style="color: #8b949e; font-size: 13px;">accuracy</span>
+        </div>
+        <div style="font-size: 13px; color: #8b949e;">
+          baseline (majority class): ${(r.baseline_accuracy*100).toFixed(1)}%<br>
+          improvement: <b style="color: #3fb950;">+${(r.improvement_over_baseline*100).toFixed(1)}%</b><br>
+          train: ${r.n_train}, test: ${r.n_test}
+        </div>
+        <div class="meta">
+          <span class="badge purple">quantum kernel</span>
+          ${s.qml.time_ms.toFixed(0)} ms
+        </div>
+      </div>
+    `;
+  }
+}
+</script>
+</body>
+</html>
