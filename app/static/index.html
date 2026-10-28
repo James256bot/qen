@@ -2505,21 +2505,30 @@ async function runCompare() {
 
   try {
     // Run both solvers in parallel
+    // Helper: fetch and parse JSON, but handle non-JSON responses
+    async function fetchSolver(sys, params, label) {
+      const res = await fetch("/simulations/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system_type: sys, parameters: params }),
+      });
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        throw new Error(`${label} failed: ${text.slice(0, 200)}`);
+      }
+    }
     const [resA, resB] = await Promise.all([
-      fetch("/simulations/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ system_type: sysA, parameters: paramsA }),
-      }).then(r => r.json()),
-      fetch("/simulations/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ system_type: sysB, parameters: paramsB }),
-      }).then(r => r.json()),
+      fetchSolver(sysA, paramsA, "A"),
+      fetchSolver(sysB, paramsB, "B"),
     ]);
 
-    if (resA.status !== "completed" || resB.status !== "completed") {
-      throw new Error("one of the solvers failed");
+    if (resA.status !== "completed") {
+      throw new Error(`solver A (${sysA}) failed: ${resA.detail || resA.status}`);
+    }
+    if (resB.status !== "completed") {
+      throw new Error(`solver B (${sysB}) failed: ${resB.detail || resB.status}`);
     }
 
     drawCompare(resA, resB, sysA, sysB, paramsA, paramsB);
@@ -2652,6 +2661,10 @@ async function runSweep() {
   sweepResults = [];
   sweepValues = [];
   sweepParamName = paramName;
+
+  // Clear the canvas before starting
+  ctx.fillStyle = "#161b22";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   try {
     // Run all steps in parallel (limited concurrency)
