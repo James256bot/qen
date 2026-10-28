@@ -28,6 +28,7 @@ from app.solvers.vmc import vmc_hubbard, exact_hubbard_ground_energy
 from app.solvers.dft import solve_dft_1d
 from app.solvers.shor import shor
 from app.solvers.electrolyte import screen_electrolytes, compute_homo_lumo
+from app.solvers.drugs import compute_binding, screen_ligand, screen_library, LIGANDS, RECEPTORS
 from app.intents import parse_intent
 from app.scenarios import list_scenarios, get_scenario
 from app.jobs import spawn_job
@@ -431,6 +432,22 @@ def dispatch(system_type, params):
         if "name" in params:
             return compute_homo_lumo(params["name"])
         return screen_electrolytes()
+
+    if system_type == "drug":
+        if "ligand" in params and "receptor" in params:
+            return compute_binding(params["ligand"], params["receptor"])
+        if "ligand" in params:
+            return screen_ligand(params["ligand"], receptors=params.get("receptors"))
+        if "receptor" in params:
+            return screen_library(ligands=params.get("ligands"), receptor_id=params["receptor"])
+        # default: screen library against COX-2
+        return screen_library(receptor_id="COX-2")
+
+    if system_type == "ligands":
+        return [{"id": k, "name": v["name"], "class": v["class"], "formula": v["formula"]} for k, v in LIGANDS.items()]
+
+    if system_type == "receptors":
+        return [{"id": k, "name": v["name"], "description": v["description"]} for k, v in RECEPTORS.items()]
 
     raise ValueError(f"unknown system_type: {system_type}")
 
