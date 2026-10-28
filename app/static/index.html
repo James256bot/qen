@@ -186,6 +186,10 @@
   <div class="row" id="params"></div>
   <button id="run">run simulation</button>
 <label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:13px; color:#8b949e;">
+  <input type="checkbox" id="backgroundJob">
+  run in background (for long simulations)
+</label>
+<label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:13px; color:#8b949e;">
   <input type="checkbox" id="live"> live update (drag a slider to re-run instantly)
 </label>
 <button id="csv" style="background:#21262d; margin-top:8px;">download CSV</button>
@@ -207,6 +211,17 @@
   <div id="editorGrid" style="display:flex; flex-direction:column; gap:4px;"></div>
   <div id="editorStatus" style="margin-top:10px; font-size:11px; color:#8b949e;"></div>
 </div>
+<div id="jobPanel" style="display:none; margin-top:12px; padding:12px; background:#161b22; border:1px solid #30363d; border-radius:6px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+    <div style="font-size:13px; color:#e6edf3;" id="jobTitle">background job</div>
+    <div style="font-size:12px; color:#8b949e;" id="jobStatus">queued</div>
+  </div>
+  <div id="jobProgressBar" style="height:4px; background:#21262d; border-radius:2px; overflow:hidden;">
+    <div id="jobProgressFill" style="height:100%; width:0%; background:#58a6ff; transition:width 0.3s;"></div>
+  </div>
+  <div style="font-size:11px; color:#8b949e; margin-top:6px;" id="jobMeta"></div>
+</div>
+
 <div id="anim" style="display:none; margin-top:10px;">
   <button id="playBtn" style="width:80px; padding:8px; display:inline-block; background:#21262d;">▶ play</button>
   <button id="gifBtn" style="width:120px; padding:8px; display:inline-block; background:#21262d; margin-left:6px;">save GIF</button>
@@ -1658,6 +1673,10 @@ document.addEventListener("change", (e) => {
 });
 
 async function runSim() {
+  const bg = document.getElementById("backgroundJob");
+  if (bg && bg.checked) {
+    return runAsBackgroundJob();
+  }
   const cmp = document.getElementById("compareToggle");
   if (cmp && cmp.checked) {
     return runCompare();
@@ -2923,6 +2942,128 @@ setTimeout(() => {
   if ($load) $load.addEventListener("click", loadSessionFromLocal);
   if ($share) $share.addEventListener("click", shareSession);
 }, 500);
+
+
+// ============================================================
+// Background job UI
+// ============================================================
+
+let activeJobPoll = null;
+let activeJobId = null;
+
+async function runAsBackgroundJob() {
+  const sys = $sys.value;
+  const params = collectParams();
+  
+  $err.textContent = "";
+  $run.disabled = true;
+  $run.textContent = "submitting job…";
+
+  try {
+    // Submit the job
+    const res = await fetch("/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ system_type: sys, parameters: params }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`submit failed: ${text.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    activeJobId = data.job_id;
+
+    // Show the job panel
+    document.getElementById("jobPanel").style.display = "block";
+    document.getElementById("jobTitle").textContent = `job: ${data.job_id.slice(0, 8)}…`;
+    document.getElementById("jobStatus").textContent = "queued";
+    document.getElementById("jobMeta").textContent = `system: ${sys}`;
+    document.getElementById("jobProgressFill").style.width = "5%";
+
+    $meta.textContent = `job submitted: ${data.job_id.slice(0, 8)}…`;
+    $raw.textContent = JSON.stringify(data, null, 2);
+
+    // Start polling
+    pollJob(data.job_id);
+  } catch (e) {
+    $err.textContent = "job error: " + e.message;
+  } finally {
+    $run.disabled = false;
+    $run.textContent = "run simulation";
+  }
+}
+
+async function pollJob(jobId) {
+  if (activeJobPoll) clearInterval(activeJobPoll);
+
+  let pollCount = 0;
+  const startTime = Date.now();
+  
+  async function check() {
+    pollCount++;
+    try {
+      const res = await fetch(`/jobs/${jobId}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          // Job was lost (server restart?), stop polling
+          clearInterval(activeJobPoll);
+          document.getElementById("jobStatus").textContent = "lost";
+          return;
+        }
+        throw new Error(`poll failed: ${res.status}`);
+      }
+      const job = await res.json();
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      document.getElementById("jobStatus").textContent = job.status;
+      document.getElementById("jobMeta").textContent = 
+        `poll ${pollCount} · elapsed ${elapsed}s` + 
+        (job.progress_total > 0 ? ` · progress ${job.progress_current}/${job.progress_total}` : "");
+
+      if (job.status === "running") {
+        // Animated progress bar
+        const pct = 10 + (pollCount * 5) % 80;
+        document.getElementById("jobProgressFill").style.width = pct + "%";
+      } else if (job.status === "completed") {
+        document.getElementById("jobProgressFill").style.width = "100%";
+        document.getElementById("jobProgressFill").style.background = "#3fb950";
+        document.getElementById("jobStatus").textContent = "completed";
+        clearInterval(activeJobPoll);
+        activeJobPoll = null;
+
+        // Render the result
+        if (job.result && job.result.result) {
+          lastResult = job.result.result;
+          lastRunId = job.id;
+          const line = draw(job.result.result);
+          $meta.textContent = `job ${jobId.slice(0, 8)}… completed in ${job.result.compute_time_ms.toFixed(1)} ms · ${line}`;
+          $raw.textContent = JSON.stringify(job, null, 2);
+        }
+      } else if (job.status === "failed") {
+        document.getElementById("jobProgressFill").style.width = "100%";
+        document.getElementById("jobProgressFill").style.background = "#f85149";
+        document.getElementById("jobStatus").textContent = "failed";
+        document.getElementById("jobMeta").textContent = job.error || "unknown error";
+        $err.textContent = "job failed: " + (job.error || "unknown");
+        clearInterval(activeJobPoll);
+        activeJobPoll = null;
+      }
+
+      // Poll for up to 10 minutes
+      if (pollCount > 300) {
+        clearInterval(activeJobPoll);
+        activeJobPoll = null;
+        document.getElementById("jobStatus").textContent = "timeout";
+      }
+    } catch (e) {
+      console.error("poll error:", e);
+    }
+  }
+
+  // First check immediately, then every 2 seconds
+  await check();
+  activeJobPoll = setInterval(check, 2000);
+}
 
 // ---- animation player wiring ----
 (function() {

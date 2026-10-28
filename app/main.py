@@ -26,6 +26,7 @@ from app.solvers.battery import vqe_molecule, exact_molecule_energy, estimate_vo
 from app.solvers.lattice2d import solve_lattice2d
 from app.solvers.vmc import vmc_hubbard, exact_hubbard_ground_energy
 from app.solvers.dft import solve_dft_1d
+from app.solvers.shor import shor
 from app.intents import parse_intent
 from app.scenarios import list_scenarios, get_scenario
 from app.jobs import spawn_job
@@ -416,6 +417,12 @@ def dispatch(system_type, params):
         xc_beta = float(params.get("xc_beta", 0.05))
         return solve_dft_1d(N=N, L=L, n_electrons=n_electrons,
                             potential=potential, xc_alpha=xc_alpha, xc_beta=xc_beta)
+
+    if system_type == "shor":
+        N = int(params.get("N", 15))
+        if not (2 <= N <= 1000):
+            raise ValueError("N must be between 2 and 1000")
+        return shor(N)
 
     raise ValueError(f"unknown system_type: {system_type}")
 
