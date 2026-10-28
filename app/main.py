@@ -28,6 +28,8 @@ from app.solvers.vmc import vmc_hubbard, exact_hubbard_ground_energy
 from app.solvers.dft import solve_dft_1d
 from app.intents import parse_intent
 from app.scenarios import list_scenarios, get_scenario
+from app.jobs import spawn_job
+from app.db import create_job, get_job, list_jobs
 
 app = FastAPI(title="QEN")
 
@@ -168,6 +170,50 @@ def landing():
     resp = FileResponse("app/static/landing.html")
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return resp
+
+
+# ============================================================
+# Background jobs
+# ============================================================
+
+@app.post("/jobs")
+def submit_job(payload: dict):
+    """Submit a long-running simulation as a background job.
+
+    Request: {"system_type": "vmc", "parameters": {...}}
+    Response: {"job_id": "...", "status": "queued"}
+    """
+    import uuid
+    system_type = payload.get("system_type", "").strip()
+    parameters = payload.get("parameters", {})
+    if not system_type:
+        raise HTTPException(status_code=400, detail="system_type is required")
+
+    job_id = str(uuid.uuid4())
+    create_job(job_id, system_type, parameters)
+
+    # Spawn the background thread
+    try:
+        spawn_job(job_id, system_type, parameters, dispatch)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"failed to spawn job: {e}")
+
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/jobs")
+def jobs_index(limit: int = Query(20, ge=1, le=100)):
+    """List recent jobs."""
+    return list_jobs(limit=limit)
+
+
+@app.get("/jobs/{job_id}")
+def job_status(job_id: str):
+    """Get job status, progress, and result."""
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    return job
 
 
 @app.get("/studio")

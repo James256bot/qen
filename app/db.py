@@ -17,6 +17,21 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_created ON runs (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_type ON runs (system_type);
+CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    system_type TEXT NOT NULL,
+    parameters TEXT NOT NULL,
+    status TEXT NOT NULL,
+    progress_current INTEGER DEFAULT 0,
+    progress_total INTEGER DEFAULT 0,
+    result TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TEXT,
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status);
 """
 
 
@@ -88,3 +103,72 @@ def list_runs(limit=20, system_type=None):
 def count_runs():
     with get_conn() as c:
         return c.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+
+
+# ============================================================
+# Job queue helpers
+# ============================================================
+
+def create_job(job_id, system_type, parameters):
+    with get_conn() as c:
+        c.execute(
+            "INSERT INTO jobs (id, system_type, parameters, status) VALUES (?,?,?,?)",
+            (job_id, system_type, json.dumps(parameters), "queued"),
+        )
+
+
+def get_job(job_id):
+    with get_conn() as c:
+        row = c.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "system_type": row["system_type"],
+        "parameters": json.loads(row["parameters"]),
+        "status": row["status"],
+        "progress_current": row["progress_current"],
+        "progress_total": row["progress_total"],
+        "result": json.loads(row["result"]) if row["result"] else None,
+        "error": row["error"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+    }
+
+
+def update_job_status(job_id, status, progress_current=None, progress_total=None):
+    with get_conn() as c:
+        if status == "running" and progress_current is None:
+            c.execute("UPDATE jobs SET status = ?, started_at = datetime('now') WHERE id = ?",
+                      (status, job_id))
+        elif progress_current is not None:
+            c.execute("UPDATE jobs SET status = ?, progress_current = ?, progress_total = ? WHERE id = ?",
+                      (status, progress_current, progress_total, job_id))
+        else:
+            c.execute("UPDATE jobs SET status = ? WHERE id = ?", (status, job_id))
+
+
+def complete_job(job_id, result):
+    with get_conn() as c:
+        c.execute(
+            "UPDATE jobs SET status = 'completed', result = ?, completed_at = datetime('now') WHERE id = ?",
+            (json.dumps(result), job_id),
+        )
+
+
+def fail_job(job_id, error):
+    with get_conn() as c:
+        c.execute(
+            "UPDATE jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?",
+            (error, job_id),
+        )
+
+
+def list_jobs(limit=20):
+    with get_conn() as c:
+        rows = c.execute(
+            "SELECT id, system_type, status, progress_current, progress_total, created_at FROM jobs ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
