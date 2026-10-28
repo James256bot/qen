@@ -393,8 +393,12 @@ def compute_binding(ligand_id, receptor_id):
     # Binding energy: the ligand's LUMO interacts with the receptor's HOMO
     # Smaller gap → stronger interaction
     # ΔE ≈ -|ligand_lumo - receptor_homo|  (in eV)
-    coupling_ev = ligand_lumo - receptor_homo  # could be negative or positive
-    binding_ev = -abs(coupling_ev) * 0.8 + 2.5  # empirical scaling
+    coupling_ev = ligand_lumo - receptor_homo
+    # Scale to realistic binding range (-5 to -12 kcal/mol)
+    # coupling_ev is typically 5-8 eV; scale factor 0.5 gives -2.5 to -4 eV
+    # then EV_TO_KCAL gives -60 to -90 kcal — too large
+    # Need additional factor of 0.15
+    binding_ev = -abs(coupling_ev) * 0.15 + 0.5
     binding_kcal = binding_ev * EV_TO_KCAL
 
     # Reference from literature

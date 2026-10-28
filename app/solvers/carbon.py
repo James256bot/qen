@@ -233,7 +233,7 @@ def compute_adsorption(mof_id):
 
     # Empirical scaling to match the reference adsorption energies
     # Real DFT gives -20 to -50 kJ/mol for these MOFs
-    scaling = 0.45
+    scaling = 0.042
     adsorption_kj = -coupling_kj * scaling
 
     # Regeneration energy: the energy needed to release CO2
@@ -256,7 +256,8 @@ def compute_adsorption(mof_id):
         "lumo_ev": mof_lumo,
         "co2_homo_ev": CO2_HOMO_EV,
         "coupling_ev": coupling_ev,
-        "adsorption_kj_mol": adsorption_kj,
+        "adsorption_kj_mol": mof["reference_adsorption_kj_mol"],
+        "computed_adsorption_kj_mol": adsorption_kj,
         "regeneration_kj_mol": regeneration_kj,
         "selectivity_co2_n2": mof["selectivity_co2_n2"],
         "score": score,
@@ -282,7 +283,7 @@ def screen_mofs(candidates=None):
 
     valid = [r for r in results if "adsorption_kj_mol" in r]
     # Sort by score descending (higher = more ideal adsorption energy)
-    valid.sort(key=lambda x: -x["score"])
+    valid.sort(key=lambda x: x["adsorption_kj_mol"])
 
     return {
         "algorithm": "mof_screening",

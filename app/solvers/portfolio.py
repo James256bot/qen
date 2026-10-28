@@ -107,14 +107,16 @@ def _markowitz_to_ising(tickers, risk_tolerance=1.0, budget=2, penalty=2.0):
     # H = sum_{i,j} Q_ij x_i x_j + sum_i c_i x_i
     Q = risk_tolerance * Sigma.copy()
     # Budget penalty: penalty * (sum x_i - budget)^2
-    # = penalty * (sum x_i^2 + 2 sum_{i<j} x_i x_j - 2*budget*sum_i x_i + budget^2)
-    # x_i^2 = x_i (binary), so:
+    # Expanded: penalty * (sum x_i^2 + 2 sum_{i<j} x_i x_j - 2*budget*sum_i x_i + budget^2)
+    # For binary x_i: x_i^2 = x_i, so:
+    #   penalty * (sum x_i + 2 sum_{i<j} x_i x_j - 2*budget*sum x_i + budget^2)
+    # = penalty * (-(2*budget - 1)*sum x_i + 2 sum_{i<j} x_i x_j) + const
     for i in range(n):
-        Q[i, i] += penalty  # from x_i^2 term
+        Q[i, i] += 0.0  # x_i^2 already accounted in linear term
         for j in range(i + 1, n):
             Q[i, j] += 2 * penalty
-    # Linear term
-    c = -mu - 2 * penalty * budget * np.ones(n) + penalty * np.ones(n)
+    # Linear term: -mu_i - penalty * (2*budget - 1)
+    c = -mu - penalty * (2 * budget - 1) * np.ones(n)
 
     # Convert QUBO to Ising: x_i = (1 - Z_i)/2
     # sum_{ij} Q_ij x_i x_j = sum_{ij} Q_ij (1 - Z_i)(1 - Z_j)/4
@@ -205,7 +207,42 @@ def _qaoa_portfolio(tickers, risk_tolerance, budget, p=2, max_iter=300, seed=42)
     psi = build_state(x_opt)
     probs = probabilities(psi)
 
-    # Find the top bitstrings
+    # Compute mu and Sigma for the post-processing block
+    mu = np.array([STOCKS[t]["mu"] for t in tickers])
+    Sigma = build_covariance(tickers)
+
+    # Post-process: find the best bitstring with exactly `budget` stocks
+    # (QAOA may not always find the constrained optimum, so we check all
+    # bitstrings with exactly `budget` bits set and pick the best)
+    from itertools import combinations
+    best_budget_portfolio = None
+    best_budget_objective = float("inf")
+    for combo in combinations(range(n), budget):
+        x_vec = np.zeros(n)
+        for idx in combo:
+            x_vec[idx] = 1
+        # Convert to bitstring
+        bitstring = "".join("1" if x_vec[i] else "0" for i in range(n))
+        # Evaluate Markowitz objective
+        expected_return = float(mu @ x_vec)
+        expected_risk = float(np.sqrt(x_vec @ Sigma @ x_vec))
+        sharpe = expected_return / expected_risk if expected_risk > 0 else 0.0
+        objective = float(risk_tolerance * expected_risk ** 2 - expected_return)
+        if objective < best_budget_objective:
+            best_budget_objective = objective
+            selected = [tickers[i] for i in combo]
+            best_budget_portfolio = {
+                "bitstring": bitstring,
+                "selected": selected,
+                "probability": 0.0,  # from classical enumeration, not QAOA
+                "expected_return": expected_return,
+                "expected_risk": expected_risk,
+                "sharpe_ratio": sharpe,
+                "objective": objective,
+                "source": "exhaustive enumeration (budget=" + str(budget) + ")",
+            }
+
+    # Find the top bitstrings from QAOA
     top = np.argsort(-probs)[:5]
     top_portfolios = []
     for idx in top:
@@ -248,6 +285,11 @@ def _qaoa_portfolio(tickers, risk_tolerance, budget, p=2, max_iter=300, seed=42)
 
     # Sort by objective (lower is better)
     top_portfolios.sort(key=lambda x: x["objective"])
+
+    # Prepend the exhaustive classical optimum if it's better than QAOA
+    if best_budget_portfolio is not None:
+        if not top_portfolios or best_budget_portfolio["objective"] < top_portfolios[0]["objective"]:
+            top_portfolios.insert(0, best_budget_portfolio)
 
     return {
         "n_stocks": n,
