@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QEN — Drug Discovery</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #e6edf3; }
+  header { padding: 20px 24px; border-bottom: 1px solid #21262d; display: flex; justify-content: space-between; align-items: center; }
+  h1 { margin: 0; font-size: 18px; }
+  h1 span { color: #58a6ff; }
+  nav a { color: #8b949e; text-decoration: none; margin-left: 16px; font-size: 13px; }
+  nav a:hover { color: #e6edf3; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  .controls { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; margin-bottom: 24px; }
+  select, button { padding: 10px; font-size: 14px; background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; }
+  button { background: #238636; cursor: pointer; font-weight: 600; }
+  button:hover { background: #2ea043; }
+  button:disabled { background: #30363d; cursor: wait; }
+  .stats { display: flex; gap: 20px; font-size: 12px; color: #8b949e; margin-bottom: 20px; }
+  .stats b { color: #e6edf3; }
+  .screen { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; }
+  .card h2 { margin: 0 0 16px; font-size: 14px; text-transform: uppercase; color: #8b949e; letter-spacing: 0.08em; }
+  .ranked { list-style: none; padding: 0; margin: 0; }
+  .ranked li { display: grid; grid-template-columns: 28px 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid #21262d; font-size: 14px; }
+  .rank { color: #8b949e; font-weight: 600; }
+  .name { font-weight: 500; }
+  .name small { color: #8b949e; font-weight: 400; margin-left: 6px; font-size: 11px; }
+  .value { font-family: ui-monospace, monospace; color: #3fb950; }
+  .value.warn { color: #d29922; }
+  .value.bad { color: #f85149; }
+  .detail-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; border-bottom: 1px solid #21262d; }
+  .detail-row:last-child { border-bottom: 0; }
+  .detail-row .label { color: #8b949e; }
+  .detail-row .val { font-family: ui-monospace, monospace; }
+  .quantum { background: #a371f722; border: 1px solid #a371f7; padding: 8px 12px; border-radius: 6px; margin-top: 12px; font-size: 12px; }
+  .quantum b { color: #a371f7; }
+  .error { color: #f85149; font-size: 13px; padding: 12px; }
+  .loading { color: #8b949e; text-align: center; padding: 40px; }
+  canvas { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>QEN <span>·</span> Drug Discovery</h1>
+  <nav>
+    <a href="/">home</a>
+    <a href="/studio">studio</a>
+    <a href="/screen">all screens</a>
+  </nav>
+</header>
+<main>
+  <div class="controls">
+    <select id="receptor"></select>
+    <select id="ligand"><option value="__all__">-- all ligands --</option></select>
+    <button id="run">run screening</button>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <canvas id="pipeline" width="1200" height="300"></canvas>
+
+  <div class="screen">
+    <div class="card">
+      <h2>Ranked candidates</h2>
+      <ul class="ranked" id="ranked">
+        <li class="loading">select a receptor and click run</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>Selected details</h2>
+      <div id="details" class="loading">click a candidate to see details</div>
+    </div>
+  </div>
+</main>
+<script>
+const $receptor = document.getElementById("receptor");
+const $ligand = document.getElementById("ligand");
+const $run = document.getElementById("run");
+const $stats = document.getElementById("stats");
+const $ranked = document.getElementById("ranked");
+const $details = document.getElementById("details");
+const $canvas = document.getElementById("pipeline");
+const ctx = $canvas.getContext("2d");
+let lastResult = null;
+
+// Load receptors and ligands
+async function loadData() {
+  const [recRes, ligRes] = await Promise.all([
+    fetch("/drug/receptors"),
+    fetch("/drug/ligands"),
+  ]);
+  const receptors = await recRes.json();
+  const ligands = await ligRes.json();
+
+  $receptor.innerHTML = receptors.map(r =>
+    `<option value="${r.id}">${r.name} (${r.pdb_id})</option>`
+  ).join("");
+  $ligand.innerHTML = `<option value="__all__">-- all ligands --</option>` +
+    ligands.map(l => `<option value="${l.id}">${l.name}</option>`).join("");
+}
+
+$run.addEventListener("click", async () => {
+  const receptor = $receptor.value;
+  const ligand = $ligand.value;
+
+  $run.disabled = true;
+  $run.textContent = "running...";
+  $ranked.innerHTML = '<li class="loading">computing binding energies...</li>';
+  $details.innerHTML = '<div class="loading">—</div>';
+
+  try {
+    const t0 = performance.now();
+    if (ligand === "__all__") {
+      // Full screen
+      const res = await fetch("/drug/screen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ receptor }),
+      });
+      const data = await res.json();
+      const wall = (performance.now() - t0) / 1000;
+      lastResult = data;
+      renderScreen(data, wall);
+    } else {
+      // Single binding
+      const res = await fetch("/drug/bind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ligand, receptor }),
+      });
+      const data = await res.json();
+      const wall = (performance.now() - t0) / 1000;
+      lastResult = { ranked: [data], top_hit: data.ligand, receptor_name: data.receptor_name };
+      renderScreen(lastResult, wall);
+      renderDetails(data);
+    }
+  } catch (e) {
+    $ranked.innerHTML = `<li class="error">error: ${e.message}</li>`;
+  } finally {
+    $run.disabled = false;
+    $run.textContent = "run screening";
+  }
+});
+
+function renderScreen(data, wall) {
+  const ranked = data.ranked || [];
+  $stats.innerHTML = `
+    <span><b>${ranked.length}</b> ligands</span>
+    <span><b>${data.receptor_name || ""}</b></span>
+    <span>wall <b>${wall.toFixed(2)}s</b></span>
+    <span>top hit <b>${data.top_hit || "—"}</b> (${(data.top_binding_kcal || 0).toFixed(2)} kcal/mol)</span>
+  `;
+
+  $ranked.innerHTML = ranked.map((h, i) => {
+    const err = h.error_pct;
+    const cls = err === null ? "" : err < 15 ? "" : err < 30 ? "warn" : "bad";
+    return `
+      <li data-idx="${i}" style="cursor: pointer;">
+        <span class="rank">${i+1}</span>
+        <span class="name">${h.ligand_name}<small>${h.ligand_class}</small></span>
+        <span class="value ${cls}">${h.binding_energy_kcal.toFixed(2)} kcal</span>
+      </li>
+    `;
+  }).join("");
+
+  // Click handler for details
+  $ranked.querySelectorAll("li[data-idx]").forEach(li => {
+    li.addEventListener("click", () => {
+      const r = ranked[parseInt(li.dataset.idx)];
+      renderDetails(r);
+    });
+  });
+
+  // Auto-show first
+  if (ranked[0]) renderDetails(ranked[0]);
+
+  // Draw pipeline
+  drawPipeline(data);
+}
+
+function renderDetails(r) {
+  const c = r.components;
+  $details.innerHTML = `
+    <div style="font-size: 15px; font-weight: 600; margin-bottom: 12px;">
+      ${r.ligand_name}
+    </div>
+    <div style="font-size: 11px; color: #8b949e; margin-bottom: 12px; font-family: ui-monospace, monospace;">
+      ${r.ligand_formula} · ${r.ligand_mw} Da · ${r.ligand_class}
+    </div>
+    <div class="detail-row"><span class="label">HOMO-LUMO coupling</span><span class="val">${c.coupling_kcal.toFixed(2)} kcal</span></div>
+    <div class="detail-row"><span class="label">H-bond contribution</span><span class="val">${c.hbond_kcal.toFixed(2)} kcal (${c.hbond_count} pairs)</span></div>
+    <div class="detail-row"><span class="label">Quantum correction</span><span class="val" style="color: #a371f7;">${c.quantum_kcal.toFixed(2)} kcal</span></div>
+    <div class="detail-row" style="font-weight: 600; border-top: 1px solid #30363d; padding-top: 10px; margin-top: 8px;">
+      <span class="label">TOTAL binding</span><span class="val" style="color: #3fb950;">${r.binding_energy_kcal.toFixed(2)} kcal</span>
+    </div>
+    ${r.reference_binding_kcal !== null ? `
+      <div class="detail-row"><span class="label">Experimental reference</span><span class="val">${r.reference_binding_kcal.toFixed(2)} kcal</span></div>
+      <div class="detail-row"><span class="label">Error</span><span class="val" style="color: ${r.error_pct < 20 ? "#3fb950" : "#d29922"};">${r.error_kcal.toFixed(2)} kcal (${r.error_pct.toFixed(1)}%)</span></div>
+    ` : '<div class="detail-row"><span class="label">Reference</span><span class="val" style="color: #8b949e;">not in BindingDB</span></div>'}
+    <div class="quantum">
+      <b>Quantum source:</b> ${r.quantum_source}
+    </div>
+  `;
+}
+
+function drawPipeline(data) {
+  const W = $canvas.width, H = $canvas.height;
+  ctx.fillStyle = "#0d1117";
+  ctx.fillRect(0, 0, W, H);
+
+  // Simple 4-phase pipeline visualization
+  const phases = ["Ligand library", "Receptor target", "Quantum binding", "Ranked candidates"];
+  const phaseW = W / phases.length;
+
+  for (let i = 0; i < phases.length; i++) {
+    const x = i * phaseW + phaseW / 2;
+    const y = H / 2;
+
+    // Phase circle
+    ctx.fillStyle = "#21262d";
+    ctx.beginPath();
+    ctx.arc(x, y, 30, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.strokeStyle = "#58a6ff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Phase number
+    ctx.fillStyle = "#e6edf3";
+    ctx.font = "bold 16px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(i + 1, x, y);
+
+    // Phase label
+    ctx.fillStyle = "#8b949e";
+    ctx.font = "11px ui-monospace, monospace";
+    ctx.textBaseline = "top";
+    ctx.fillText(phases[i], x, y + 45);
+
+    // Arrow to next
+    if (i < phases.length - 1) {
+      ctx.strokeStyle = "#30363d";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x + 30, y);
+      ctx.lineTo(x + phaseW - 30, y);
+      ctx.stroke();
+    }
+  }
+}
+
+loadData();
+</script>
+</body>
+</html>

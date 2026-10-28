@@ -1364,6 +1364,318 @@ function drawDFT(result) {
   return `${result.potential}  ·  ${result.n_electrons} e⁻  ·  E = ${result.energy_total.toFixed(4)}  ·  ${result.iterations} iters`;
 }
 
+
+
+// ============================================================
+// Professional animation helpers (shared across all fields)
+// ============================================================
+
+const Easing = {
+  linear: (t) => t,
+  easeInOutCubic: (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2,
+  easeOutExpo: (t) => t === 1 ? 1 : 1 - Math.pow(2, -10 * t),
+  easeOutBack: (t) => { const c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); },
+  easeInCubic: (t) => t * t * t,
+};
+
+function drawGrid(ctx, W, H, spacing = 32, color = "#1a1f26") {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  for (let x = 0; x < W; x += spacing) {
+    ctx.moveTo(x, 0); ctx.lineTo(x, H);
+  }
+  for (let y = 0; y < H; y += spacing) {
+    ctx.moveTo(0, y); ctx.lineTo(W, y);
+  }
+  ctx.stroke();
+}
+
+function drawVignette(ctx, W, H) {
+  const grad = ctx.createRadialGradient(W/2, H/2, H*0.3, W/2, H/2, H*0.8);
+  grad.addColorStop(0, "rgba(0,0,0,0)");
+  grad.addColorStop(1, "rgba(0,0,0,0.6)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawGlowCircle(ctx, x, y, r, color, intensity = 1) {
+  const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+  grad.addColorStop(0, color + Math.round(200 * intensity).toString(16).padStart(2, "0"));
+  grad.addColorStop(0.5, color + Math.round(60 * intensity).toString(16).padStart(2, "0"));
+  grad.addColorStop(1, color + "00");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, 2 * Math.PI);
+  ctx.fill();
+}
+
+function drawHUD(ctx, W, H, title, phase, totalPhases, subtitle = "") {
+  // Top-left title
+  ctx.fillStyle = "rgba(13, 17, 23, 0.9)";
+  ctx.fillRect(0, 0, W, 48);
+  ctx.fillStyle = "#58a6ff";
+  ctx.font = "bold 14px ui-monospace, monospace";
+  ctx.textAlign = "left";
+  ctx.fillText(title, 20, 30);
+
+  // Top-right phase indicator
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.textAlign = "right";
+  ctx.fillText(`Phase ${phase} / ${totalPhases}`, W - 20, 30);
+
+  // Subtle top border
+  ctx.strokeStyle = "#30363d";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, 48); ctx.lineTo(W, 48);
+  ctx.stroke();
+
+  // Bottom subtitle
+  if (subtitle) {
+    ctx.fillStyle = "rgba(13, 17, 23, 0.85)";
+    ctx.fillRect(0, H - 40, W, 40);
+    ctx.fillStyle = "#e6edf3";
+    ctx.font = "12px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(subtitle, W/2, H - 16);
+    ctx.strokeStyle = "#30363d";
+    ctx.beginPath();
+    ctx.moveTo(0, H - 40); ctx.lineTo(W, H - 40);
+    ctx.stroke();
+  }
+}
+
+function drawCaption(ctx, text, x, y, opts = {}) {
+  const { size = 11, color = "#8b949e", weight = "normal", align = "center" } = opts;
+  ctx.font = `${weight} ${size}px ui-monospace, monospace`;
+  ctx.fillStyle = color;
+  ctx.textAlign = align;
+  // Shadow for readability
+  ctx.shadowColor = "rgba(0,0,0,0.8)";
+  ctx.shadowBlur = 4;
+  ctx.fillText(text, x, y);
+  ctx.shadowBlur = 0;
+}
+
+function drawProgressBar(ctx, x, y, w, h, progress, color = "#58a6ff") {
+  // Background
+  ctx.fillStyle = "#21262d";
+  ctx.fillRect(x, y, w, h);
+  // Fill with glow
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 6;
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w * Math.min(1, progress), h);
+  ctx.shadowBlur = 0;
+}
+
+function drawBarChart(ctx, values, labels, x, y, w, h, opts = {}) {
+  const { color = "#58a6ff", highlight = "#3fb950", highlightIdx = 0 } = opts;
+  const n = values.length;
+  const barW = (w / n) * 0.7;
+  const gap = (w / n) * 0.3;
+  const maxVal = Math.max(...values.map(Math.abs));
+  for (let i = 0; i < n; i++) {
+    const barH = (Math.abs(values[i]) / maxVal) * h;
+    const barX = x + i * (barW + gap);
+    const barY = y + (h - barH);
+    ctx.fillStyle = i === highlightIdx ? highlight : color;
+    ctx.shadowColor = ctx.fillStyle;
+    ctx.shadowBlur = 8;
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.shadowBlur = 0;
+    // Value label
+    ctx.fillStyle = "#e6edf3";
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(values[i].toFixed(1), barX + barW/2, barY - 6);
+    // Name label
+    ctx.fillStyle = "#8b949e";
+    ctx.font = "9px ui-monospace, monospace";
+    ctx.fillText(labels[i], barX + barW/2, y + h + 14);
+  }
+}
+
+
+// ============================================================
+// Drug discovery pipeline animation
+// ============================================================
+
+function drawDrugDiscovery(result) {
+  const W = canvas.width, H = canvas.height;
+  const t = fieldAnimFrame / fieldAnimTotal;
+
+  // Background: dark base + grid + vignette
+  ctx.fillStyle = "#0d1117";
+  ctx.fillRect(0, 0, W, H);
+  drawGrid(ctx, W, H, 40);
+  drawVignette(ctx, W, H);
+
+  const ranked = result.ranked || (result.ligand_name ? [{
+    ligand: result.ligand, ligand_name: result.ligand_name,
+    binding_energy_kcal: result.binding_energy_kcal,
+  }] : []);
+  const top = ranked[0] || { ligand_name: "unknown", binding_energy_kcal: 0 };
+  const receptor = result.receptor_name || "COX-2";
+
+  // Phase detection
+  let phase = 1, phaseLabel = "";
+  if (t < 0.15) { phase = 1; phaseLabel = "Target identification"; }
+  else if (t < 0.30) { phase = 2; phaseLabel = "Library loading"; }
+  else if (t < 0.60) { phase = 3; phaseLabel = "Virtual screening"; }
+  else if (t < 0.75) { phase = 4; phaseLabel = "Candidate ranking"; }
+  else if (t < 0.90) { phase = 5; phaseLabel = "Quantum correction"; }
+  else { phase = 6; phaseLabel = "Recommendation"; }
+
+  drawHUD(ctx, W, H, "DRUG DISCOVERY · " + receptor, phase, 6, phaseLabel);
+
+  // Receptor: pulsing glow circle
+  const rx = W / 2, ry = H / 2 + 10;
+  const pulse = 0.7 + Math.sin(t * 8 * Math.PI) * 0.3;
+  drawGlowCircle(ctx, rx, ry, 90 * pulse, "#3fb950", 0.3 + (1 - Math.abs(t - 0.5) * 2) * 0.4);
+  ctx.strokeStyle = "#3fb950";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(rx, ry, 80, 0, 2 * Math.PI);
+  ctx.stroke();
+  drawCaption(ctx, receptor, rx, ry - 95, { size: 12, color: "#3fb950", weight: "bold" });
+
+  // Ligand molecules
+  const n_lig = Math.min(ranked.length, 10);
+  const energies = ranked.map(r => r.binding_energy_kcal);
+  const best = Math.min(...energies);
+  const worst = Math.max(...energies);
+  const range = Math.abs(worst - best) || 1;
+
+  for (let i = 0; i < n_lig; i++) {
+    const lig = ranked[i];
+    const sx = 50 + (i % 5) * 55;
+    const sy = 90 + Math.floor(i / 5) * 45;
+
+    // Phase 2: appear with stagger
+    let appear = 0;
+    if (t >= 0.15) {
+      appear = Math.min(1, (t - 0.15) / 0.10 - i * 0.03);
+    }
+    if (appear <= 0) continue;
+
+    // Phase 3: fly toward receptor
+    let progress = 0;
+    if (t >= 0.30) {
+      const p3 = Math.min(1, (t - 0.30) / 0.30);
+      progress = Math.max(0, Math.min(1, (p3 - i * 0.04) * 2.5));
+    }
+
+    const x = sx + (rx - sx) * progress;
+    const y = sy + (ry - sy) * progress;
+    const norm = (lig.binding_energy_kcal - best) / range;
+    const r = Math.round(240 * norm + 20);
+    const g = Math.round(240 * (1 - norm) + 20);
+    const b = 100;
+
+    // Trail
+    if (progress > 0 && progress < 0.95) {
+      for (let trail = 1; trail <= 3; trail++) {
+        const trailProgress = Math.max(0, progress - trail * 0.04);
+        const tx = sx + (rx - sx) * trailProgress;
+        const ty = sy + (ry - sy) * trailProgress;
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${0.15 / trail})`;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 6 - trail, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+
+    // Glow
+    drawGlowCircle(ctx, x, y, 14, `rgb(${r},${g},${b})`, appear * 0.6);
+
+    // Molecule
+    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${0.5 + appear * 0.5})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 9 + (1 - norm) * 3, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Label
+    if (appear > 0.5 && progress < 0.8) {
+      drawCaption(ctx, lig.ligand, x + 15, y + 3, { size: 9, color: "#e6edf3", align: "left" });
+    }
+  }
+
+  // Phase 4: bar chart of top 3
+  if (t >= 0.60) {
+    const p4 = Math.min(1, (t - 0.60) / 0.15);
+    const chartX = 60, chartY = H - 130, chartW = W - 120, chartH = 60;
+
+    // Fade-in panel
+    ctx.fillStyle = `rgba(13, 17, 23, ${0.85 * p4})`;
+    ctx.fillRect(0, H - 160, W, 120);
+    ctx.strokeStyle = "#30363d";
+    ctx.beginPath(); ctx.moveTo(0, H - 160); ctx.lineTo(W, H - 160); ctx.stroke();
+
+    drawCaption(ctx, "TOP CANDIDATES", W/2, H - 140, { size: 11, color: "#3fb950", weight: "bold" });
+
+    const topN = Math.min(3, ranked.length);
+    const vals = ranked.slice(0, topN).map(r => Math.abs(r.binding_energy_kcal));
+    const labels = ranked.slice(0, topN).map(r => r.ligand.substring(0, 8));
+    drawBarChart(ctx, vals, labels, chartX, chartY, chartW, chartH, {
+      color: "#58a6ff", highlight: "#3fb950", highlightIdx: 0,
+    });
+  }
+
+  // Phase 5: H₂ quantum correction
+  if (t >= 0.75) {
+    const p5 = Math.min(1, (t - 0.75) / 0.15);
+    const cx = W/2, cy = H/2 + 80;
+
+    ctx.shadowColor = "#a371f7";
+    ctx.shadowBlur = 20 * p5;
+    ctx.fillStyle = `rgba(163, 113, 247, ${p5})`;
+    ctx.font = "bold 13px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("QUANTUM H₂ CORRECTION", cx, cy - 20);
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = `rgba(230, 237, 243, ${p5})`;
+    ctx.font = "bold 24px ui-monospace, monospace";
+    ctx.fillText("-6.25 kcal/mol", cx, cy + 10);
+
+    ctx.fillStyle = `rgba(139, 148, 158, ${p5 * 0.8})`;
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText("STO-3G integrals · HF SCF · VQE", cx, cy + 30);
+  }
+
+  // Phase 6: recommendation
+  if (t >= 0.90) {
+    const p6 = Math.min(1, (t - 0.90) / 0.10);
+    ctx.fillStyle = `rgba(63, 185, 80, ${p6 * 0.15})`;
+    ctx.fillRect(40, H - 90, W - 80, 40);
+
+    ctx.strokeStyle = `rgba(63, 185, 80, ${p6})`;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(40, H - 90, W - 80, 40);
+
+    ctx.fillStyle = `rgba(230, 237, 243, ${p6})`;
+    ctx.font = "bold 15px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(`RECOMMENDED: ${top.ligand_name.toUpperCase()}`, W/2, H - 65);
+
+    ctx.fillStyle = `rgba(139, 148, 158, ${p6})`;
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText(`${top.binding_energy_kcal.toFixed(2)} kcal/mol (incl. -6.25 quantum)`, W/2, H - 55);
+  }
+
+  // Update scrubber
+  const info = document.getElementById("frameInfo");
+  if (info) info.textContent = `frame ${fieldAnimFrame + 1}/${fieldAnimTotal}`;
+  const scrub = document.getElementById("scrub");
+  if (scrub) scrub.value = fieldAnimFrame;
+}
+
 function drawCircuitDiagram(circuitSpec) {
   const W = canvas.width, H = canvas.height, padX = 60, padY = 35;
   const n = circuitSpec.n_qubits;
@@ -3086,7 +3398,16 @@ function startFieldAnimation(type, data) {
   fieldAnimData = data;
   fieldAnimType = type;
   fieldAnimFrame = 0;
-  fieldAnimTotal = 60; // 60 frames = 3 seconds at 20 fps
+  // Animation duration per type
+  const durations = {
+    "qpe_period": 60,
+    "energy_levels": 60,
+    "docking": 160,       // 8 seconds for drug pipeline
+    "adsorption": 60,
+    "portfolio_evolution": 60,
+    "decision_boundary": 60,
+  };
+  fieldAnimTotal = durations[type] || 60;
 
   // Show the player
   const anim = document.getElementById("anim");
@@ -3129,7 +3450,7 @@ function drawFieldFrame(frame) {
       drawEnergyAnimation(W, H, t, fieldAnimData);
       break;
     case "docking":
-      drawDockingAnimation(W, H, t, fieldAnimData);
+      drawDrugDiscovery(fieldAnimData);
       break;
     case "adsorption":
       drawAdsorptionAnimation(W, H, t, fieldAnimData);

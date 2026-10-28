@@ -29,6 +29,8 @@ from app.solvers.dft import solve_dft_1d
 from app.solvers.shor import shor
 from app.solvers.electrolyte import screen_electrolytes, compute_homo_lumo
 from app.solvers.drugs import compute_binding, screen_ligand, screen_library, LIGANDS, RECEPTORS
+from app.solvers.drug_scoring import compute_binding_production
+from app.solvers.drug_data import list_ligands, list_receptors, get_ligand, get_receptor
 from app.solvers.carbon import screen_mofs, compute_adsorption, MOFS
 from app.solvers.portfolio import optimize_portfolio, list_stocks, STOCKS
 from app.solvers.qml import classify, list_datasets
@@ -250,6 +252,102 @@ def screen_all():
 def screen_page():
     from fastapi.responses import FileResponse
     resp = FileResponse("app/static/screen.html")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
+
+
+# ============================================================
+# Production drug discovery
+# ============================================================
+
+@app.get("/drug/ligands")
+def drug_ligands():
+    return list_ligands()
+
+
+@app.get("/drug/receptors")
+def drug_receptors():
+    return list_receptors()
+
+
+@app.post("/drug/bind")
+def drug_bind(payload: dict):
+    """Compute binding energy for one ligand-receptor pair."""
+    ligand = payload.get("ligand")
+    receptor = payload.get("receptor")
+    if not ligand or not receptor:
+        raise HTTPException(status_code=400, detail="ligand and receptor required")
+    try:
+        return compute_binding_production(ligand, receptor)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/drug/screen")
+def drug_screen(payload: dict):
+    """Screen a library of ligands against a receptor.
+
+    Request: {"receptor": "COX-2", "ligands": [...] (optional)}
+    Returns: ranked list with binding energies and components.
+    """
+    receptor_id = payload.get("receptor", "COX-2")
+    ligand_ids = payload.get("ligands") or [l["id"] for l in list_ligands()]
+
+    results = []
+    for lid in ligand_ids:
+        try:
+            r = compute_binding_production(lid, receptor_id)
+            results.append(r)
+        except Exception as e:
+            results.append({"ligand": lid, "error": str(e)})
+
+    valid = [r for r in results if "binding_energy_kcal" in r]
+    valid.sort(key=lambda x: x["binding_energy_kcal"])
+
+    return {
+        "receptor": receptor_id,
+        "receptor_name": get_receptor(receptor_id)["name"],
+        "n_ligands": len(ligand_ids),
+        "n_valid": len(valid),
+        "ranked": valid,
+        "top_hit": valid[0]["ligand"] if valid else None,
+        "top_binding_kcal": valid[0]["binding_energy_kcal"] if valid else None,
+    }
+
+
+@app.post("/drug/screen-all")
+def drug_screen_all(payload: dict = {}):
+    """Screen all ligands against all receptors. Returns the full matrix."""
+    ligand_ids = payload.get("ligands") or [l["id"] for l in list_ligands()]
+    receptor_ids = payload.get("receptors") or [r["id"] for r in list_receptors()]
+
+    matrix = []
+    for lid in ligand_ids:
+        row = []
+        for rid in receptor_ids:
+            try:
+                r = compute_binding_production(lid, rid)
+                row.append({
+                    "receptor": rid,
+                    "binding_kcal": r["binding_energy_kcal"],
+                    "reference_kcal": r["reference_binding_kcal"],
+                    "error_kcal": r["error_kcal"],
+                })
+            except Exception as e:
+                row.append({"receptor": rid, "error": str(e)})
+        matrix.append({"ligand": lid, "row": row})
+
+    return {
+        "n_ligands": len(ligand_ids),
+        "n_receptors": len(receptor_ids),
+        "matrix": matrix,
+    }
+
+
+@app.get("/drug")
+def drug_page():
+    from fastapi.responses import FileResponse
+    resp = FileResponse("app/static/drug.html")
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return resp
 
@@ -543,13 +641,16 @@ def dispatch(system_type, params):
 
     if system_type == "drug":
         if "ligand" in params and "receptor" in params:
-            return compute_binding(params["ligand"], params["receptor"])
+            result = compute_binding(params["ligand"], params["receptor"])
+            return _add_animation_hint("drug", result)
         if "ligand" in params:
-            return screen_ligand(params["ligand"], receptors=params.get("receptors"))
+            result = screen_ligand(params["ligand"], receptors=params.get("receptors"))
+            return _add_animation_hint("drug", result)
         if "receptor" in params:
-            return screen_library(ligands=params.get("ligands"), receptor_id=params["receptor"])
-        # default: screen library against COX-2
-        return _add_animation_hint("drug", screen_library(receptor_id="COX-2"))
+            result = screen_library(ligands=params.get("ligands"), receptor_id=params["receptor"])
+            return _add_animation_hint("drug", result)
+        result = screen_library(receptor_id="COX-2")
+        return _add_animation_hint("drug", result)
 
     if system_type == "ligands":
         return [{"id": k, "name": v["name"], "class": v["class"], "formula": v["formula"]} for k, v in LIGANDS.items()]
@@ -589,7 +690,7 @@ def _add_animation_hint(system_type, result):
     hints = {
         "shor": {"type": "qpe_period", "duration_ms": 3000},
         "electrolyte": {"type": "energy_levels", "duration_ms": 2000},
-        "drug": {"type": "docking", "duration_ms": 3000},
+        "drug": {"type": "docking", "duration_ms": 8000},
         "carbon": {"type": "adsorption", "duration_ms": 2000},
         "portfolio": {"type": "portfolio_evolution", "duration_ms": 3000},
         "qml": {"type": "decision_boundary", "duration_ms": 2000},
