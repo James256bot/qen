@@ -427,7 +427,7 @@ def dispatch(system_type, params):
         N = int(params.get("N", 15))
         if not (2 <= N <= 1000):
             raise ValueError("N must be between 2 and 1000")
-        return shor(N)
+        return _add_animation_hint("shor", shor(N))
 
     if system_type == "electrolyte":
         if "candidates" in params:
@@ -444,7 +444,7 @@ def dispatch(system_type, params):
         if "receptor" in params:
             return screen_library(ligands=params.get("ligands"), receptor_id=params["receptor"])
         # default: screen library against COX-2
-        return screen_library(receptor_id="COX-2")
+        return _add_animation_hint("drug", screen_library(receptor_id="COX-2"))
 
     if system_type == "ligands":
         return [{"id": k, "name": v["name"], "class": v["class"], "formula": v["formula"]} for k, v in LIGANDS.items()]
@@ -455,14 +455,14 @@ def dispatch(system_type, params):
     if system_type == "carbon":
         if "mof" in params:
             return compute_adsorption(params["mof"])
-        return screen_mofs(candidates=params.get("candidates"))
+        return _add_animation_hint("carbon", screen_mofs(candidates=params.get("candidates")))
 
     if system_type == "portfolio":
         tickers = params.get("tickers")
         risk = float(params.get("risk_tolerance", 0.5))
         budget = int(params.get("budget", 2))
         p_layers = int(params.get("p", 2))
-        return optimize_portfolio(tickers=tickers, risk_tolerance=risk, budget=budget, p=p_layers)
+        return _add_animation_hint("portfolio", optimize_portfolio(tickers=tickers, risk_tolerance=risk, budget=budget, p=p_layers))
 
     if system_type == "stocks":
         return list_stocks()
@@ -471,12 +471,27 @@ def dispatch(system_type, params):
         dataset = params.get("dataset", "iris")
         n_qubits = int(params.get("n_qubits", 4))
         test_frac = float(params.get("test_frac", 0.3))
-        return classify(dataset=dataset, n_qubits=n_qubits, test_frac=test_frac)
+        return _add_animation_hint("qml", classify(dataset=dataset, n_qubits=n_qubits, test_frac=test_frac))
 
     if system_type == "datasets":
         return list_datasets()
 
     raise ValueError(f"unknown system_type: {system_type}")
+
+
+def _add_animation_hint(system_type, result):
+    """Attach an animation hint to the result so the UI knows what to render."""
+    hints = {
+        "shor": {"type": "qpe_period", "duration_ms": 3000},
+        "electrolyte": {"type": "energy_levels", "duration_ms": 2000},
+        "drug": {"type": "docking", "duration_ms": 3000},
+        "carbon": {"type": "adsorption", "duration_ms": 2000},
+        "portfolio": {"type": "portfolio_evolution", "duration_ms": 3000},
+        "qml": {"type": "decision_boundary", "duration_ms": 2000},
+    }
+    if system_type in hints:
+        result["animation"] = hints[system_type]
+    return result
 
 
 @app.post("/ask")

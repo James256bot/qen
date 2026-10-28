@@ -1555,6 +1555,12 @@ function drawCircuit(result, circuitSpec) {
 }
 
 function draw(result) {
+  // If the result has an animation hint, start the animation
+  if (result.animation && result.animation.type) {
+    startFieldAnimation(result.animation.type, result);
+    return result.animation.type;
+  }
+
   if (result.algorithm === "DFT_1D") return drawDFT(result);
   if (result.algorithm === "VMC_Hubbard") return drawVMC(result);
   if (result.frames && result.Nx && result.Ny) return drawLattice(result);
@@ -3063,6 +3069,354 @@ async function pollJob(jobId) {
   // First check immediately, then every 2 seconds
   await check();
   activeJobPoll = setInterval(check, 2000);
+}
+
+
+// ============================================================
+// Field animations — one per applied field
+// ============================================================
+
+let fieldAnimFrame = 0;
+let fieldAnimTotal = 60;
+let fieldAnimTimer = null;
+let fieldAnimData = null;
+let fieldAnimType = null;
+
+function startFieldAnimation(type, data) {
+  fieldAnimData = data;
+  fieldAnimType = type;
+  fieldAnimFrame = 0;
+  fieldAnimTotal = 60; // 60 frames = 3 seconds at 20 fps
+
+  // Show the player
+  const anim = document.getElementById("anim");
+  if (anim) anim.style.display = "block";
+  const scrub = document.getElementById("scrub");
+  if (scrub) { scrub.max = fieldAnimTotal - 1; scrub.value = 0; }
+
+  drawFieldFrame(0);
+  playFieldAnimation();
+}
+
+function stopFieldAnimation() {
+  if (fieldAnimTimer) {
+    clearInterval(fieldAnimTimer);
+    fieldAnimTimer = null;
+  }
+}
+
+function playFieldAnimation() {
+  stopFieldAnimation();
+  fieldAnimTimer = setInterval(() => {
+    fieldAnimFrame = (fieldAnimFrame + 1) % fieldAnimTotal;
+    drawFieldFrame(fieldAnimFrame);
+  }, 50); // 20 fps
+}
+
+function drawFieldFrame(frame) {
+  if (!fieldAnimData) return;
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = "#161b22";
+  ctx.fillRect(0, 0, W, H);
+
+  const t = frame / fieldAnimTotal; // 0 to 1
+
+  switch (fieldAnimType) {
+    case "qpe_period":
+      drawQPEAnimation(W, H, t, fieldAnimData);
+      break;
+    case "energy_levels":
+      drawEnergyAnimation(W, H, t, fieldAnimData);
+      break;
+    case "docking":
+      drawDockingAnimation(W, H, t, fieldAnimData);
+      break;
+    case "adsorption":
+      drawAdsorptionAnimation(W, H, t, fieldAnimData);
+      break;
+    case "portfolio_evolution":
+      drawPortfolioAnimation(W, H, t, fieldAnimData);
+      break;
+    case "decision_boundary":
+      drawDecisionBoundaryAnimation(W, H, t, fieldAnimData);
+      break;
+  }
+
+  const info = document.getElementById("frameInfo");
+  if (info) info.textContent = `frame ${frame + 1}/${fieldAnimTotal}  ·  t = ${(t * 100).toFixed(0)}%`;
+  const scrub = document.getElementById("scrub");
+  if (scrub) scrub.value = frame;
+}
+
+// ---------- Shor: QPE period finding ----------
+function drawQPEAnimation(W, H, t, data) {
+  const n_ancilla = 6;
+  const N = 2 ** n_ancilla;
+  const pad = 60;
+  const phase = t * 0.5; // phase sweeps from 0 to 0.5
+
+  // Draw the probability distribution (Gaussian around phase)
+  const probs = [];
+  for (let i = 0; i < N; i++) {
+    const p = phase * N;
+    const x = i / N;
+    const sigma = 1.5 / N;
+    const g = Math.exp(-((x - phase) ** 2) / (2 * sigma ** 2));
+    probs.push(g);
+  }
+  const pmax = Math.max(...probs);
+
+  // Axes
+  ctx.strokeStyle = "#30363d"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, 30);
+  ctx.lineTo(pad, H - 40);
+  ctx.lineTo(W - 20, H - 40);
+  ctx.stroke();
+
+  // Bars
+  const barW = (W - pad - 30) / N;
+  for (let i = 0; i < N; i++) {
+    const x = pad + i * barW;
+    const y = (H - 40) - (probs[i] / pmax) * (H - 70);
+    const bh = (H - 40) - y;
+    ctx.fillStyle = "#58a6ff";
+    ctx.fillRect(x, y, barW * 0.8, bh);
+  }
+
+  // Title
+  ctx.fillStyle = "#e6edf3";
+  ctx.font = "14px ui-monospace, monospace";
+  ctx.fillText(`Shor QPE: phase = ${phase.toFixed(3)}`, pad, 20);
+  if (t > 0.9) {
+    ctx.fillStyle = "#3fb950";
+    ctx.fillText("period found → factor N", pad + 250, 20);
+  }
+}
+
+// ---------- Electrolyte: energy levels ----------
+function drawEnergyAnimation(W, H, t, data) {
+  const pad = 60;
+  const electrolytes = data.ranked || [];
+  const n = electrolytes.length;
+  const rowH = (H - 60) / Math.max(n, 1);
+
+  ctx.font = "14px ui-monospace, monospace";
+  ctx.fillStyle = "#e6edf3";
+  ctx.fillText("Electrolyte stability windows", pad, 22);
+
+  for (let i = 0; i < n; i++) {
+    const e = electrolytes[i];
+    const y = 40 + i * rowH;
+    const reveal = Math.min(1, t * n * 1.5 - i * 0.5);
+    if (reveal <= 0) continue;
+
+    const homoX = pad + 150 + (e.homo_ev + 10) * 20;
+    const lumoX = pad + 150 + (e.lumo_ev + 10) * 20;
+    const bX = pad + 150 + (e.homo_ev + 10) * 20 * reveal;
+    const bY = pad + 150 + (e.lumo_ev + 10) * 20 * reveal;
+
+    ctx.fillStyle = "#8b949e";
+    ctx.font = "12px ui-monospace, monospace";
+    ctx.fillText(e.name, pad, y + 5);
+
+    // Energy window bar
+    ctx.fillStyle = "#21262d";
+    ctx.fillRect(homoX, y - 2, lumoX - homoX, 4);
+    if (reveal > 0.3) {
+      ctx.fillStyle = "#58a6ff";
+      ctx.fillRect(homoX, y - 2, (lumoX - homoX) * (reveal - 0.3) / 0.7, 4);
+    }
+
+    // Labels
+    if (reveal > 0.5) {
+      ctx.fillStyle = "#8b949e";
+      ctx.fillText(`gap ${e.gap_ev.toFixed(2)} eV`, lumoX + 10, y + 5);
+    }
+  }
+}
+
+// ---------- Drug: docking animation ----------
+function drawDockingAnimation(W, H, t, data) {
+  const pad = 60;
+  const ligands = data.ranked || [];
+  const best = ligands[0];
+
+  ctx.fillStyle = "#e6edf3";
+  ctx.font = "14px ui-monospace, monospace";
+  ctx.fillText(`Virtual screening: ${data.receptor_name || "COX-2"}`, pad, 22);
+
+  // Draw the receptor site
+  const receptorX = W - 200;
+  const receptorY = H / 2 + 20;
+  ctx.strokeStyle = "#3fb950";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(receptorX, receptorY, 60, 0, 2 * Math.PI);
+  ctx.stroke();
+  ctx.fillStyle = "#3fb950";
+  ctx.font = "12px ui-monospace, monospace";
+  ctx.fillText("receptor", receptorX - 35, receptorY - 70);
+
+  // Draw ligands approaching
+  for (let i = 0; i < Math.min(ligands.length, 5); i++) {
+    const lig = ligands[i];
+    const startX = pad + 100;
+    const startY = 60 + i * 50;
+    const progress = Math.min(1, t * 2 - i * 0.15);
+    if (progress <= 0) continue;
+
+    const x = startX + (receptorX - startX) * progress;
+    const y = startY + (receptorY - startY) * progress;
+
+    ctx.fillStyle = i === 0 ? "#58a6ff" : "#21262d";
+    ctx.beginPath();
+    ctx.arc(x, y, 12, 0, 2 * Math.PI);
+    ctx.fill();
+
+    ctx.fillStyle = i === 0 ? "#e6edf3" : "#8b949e";
+    ctx.font = "11px ui-monospace, monospace";
+    ctx.fillText(lig.ligand, x + 16, y + 4);
+  }
+
+  // Binding energy readout
+  if (t > 0.7) {
+    ctx.fillStyle = "#3fb950";
+    ctx.font = "14px ui-monospace, monospace";
+    ctx.fillText(`top hit: ${best.ligand}  ΔG = ${best.binding_energy_kcal.toFixed(2)} kcal/mol`, pad, H - 20);
+  }
+}
+
+// ---------- Carbon: adsorption ----------
+function drawAdsorptionAnimation(W, H, t, data) {
+  const pad = 60;
+  const mofs = data.ranked || [];
+  const best = mofs[0];
+
+  ctx.fillStyle = "#e6edf3";
+  ctx.font = "14px ui-monospace, monospace";
+  ctx.fillText(`CO2 adsorption: ${best?.name || "Mg-MOF-74"}`, pad, 22);
+
+  // Draw the MOF pore
+  const poreX = W / 2;
+  const poreY = H / 2 + 20;
+  ctx.strokeStyle = "#3fb950";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(poreX, poreY, 80, 0, 2 * Math.PI);
+  ctx.stroke();
+  ctx.fillStyle = "#3fb950";
+  ctx.fillText("MOF pore", poreX - 30, poreY - 90);
+
+  // Draw CO2 molecules
+  for (let i = 0; i < 3; i++) {
+    const startY = -40;
+    const progress = Math.min(1, t * 1.5 - i * 0.2);
+    if (progress <= 0) continue;
+    const y = startY + (poreY - startY) * progress;
+    const x = poreX - 30 + i * 30;
+
+    ctx.fillStyle = "#58a6ff";
+    ctx.beginPath();
+    ctx.arc(x, y, 14, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.fillStyle = "#e6edf3";
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText("CO₂", x - 10, y + 3);
+  }
+
+  // Energy readout
+  if (t > 0.8) {
+    ctx.fillStyle = "#3fb950";
+    ctx.font = "14px ui-monospace, monospace";
+    ctx.fillText(`adsorption: ${best?.adsorption_kj_mol.toFixed(1) || "?"} kJ/mol`, pad, H - 20);
+  }
+}
+
+// ---------- Portfolio: evolution ----------
+function drawPortfolioAnimation(W, H, t, data) {
+  const pad = 60;
+  const tickers = data.tickers || [];
+  const top = data.top_portfolios || [];
+
+  ctx.fillStyle = "#e6edf3";
+  ctx.font = "14px ui-monospace, monospace";
+  ctx.fillText(`QAOA iterations: ${Math.floor(t * 100)}%`, pad, 22);
+
+  // Draw bars for each stock, highlighting the ones in the optimal portfolio
+  const optimal = data.optimal_portfolio?.selected || [];
+  const barW = (W - pad - 30) / tickers.length;
+  for (let i = 0; i < tickers.length; i++) {
+    const ticker = tickers[i];
+    const inOptimal = optimal.includes(ticker);
+    const reveal = Math.min(1, t * 2 - i * 0.1);
+    if (reveal <= 0) continue;
+
+    const x = pad + i * barW;
+    const barHeight = (H - 80) * reveal;
+    const y = H - 40 - barHeight;
+
+    ctx.fillStyle = inOptimal ? "#3fb950" : "#21262d";
+    ctx.fillRect(x, y, barW * 0.8, barHeight);
+
+    ctx.fillStyle = "#8b949e";
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.save();
+    ctx.translate(x + barW * 0.4, H - 30);
+    ctx.rotate(-Math.PI / 4);
+    ctx.fillText(ticker, 0, 0);
+    ctx.restore();
+  }
+
+  // Optimal portfolio readout
+  if (t > 0.8) {
+    ctx.fillStyle = "#3fb950";
+    ctx.font = "14px ui-monospace, monospace";
+    ctx.fillText(`optimal: ${optimal.join(", ")}`, pad, H - 15);
+  }
+}
+
+// ---------- QML: decision boundary ----------
+function drawDecisionBoundaryAnimation(W, H, t, data) {
+  const pad = 60;
+  ctx.fillStyle = "#e6edf3";
+  ctx.font = "14px ui-monospace, monospace";
+  ctx.fillText(`Quantum kernel classifier: ${data.dataset}`, pad, 22);
+
+  // Draw a 2D scatter of the test predictions
+  const points = data.predictions || [];
+  const n = points.length;
+  const gridW = W - 2 * pad;
+  const gridH = H - 2 * pad;
+
+  for (let i = 0; i < n; i++) {
+    const p = points[i];
+    const x = pad + (i % 15) * (gridW / 15);
+    const y = pad + Math.floor(i / 15) * (gridH / Math.max(1, Math.ceil(n / 15)));
+
+    const color = ["#58a6ff", "#3fb950", "#d29922"][p.predicted % 3];
+    const radius = 8 * Math.min(1, t * 2);
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x + 5, y + 5, radius, 0, 2 * Math.PI);
+    ctx.fill();
+
+    if (p.correct) {
+      ctx.strokeStyle = "#3fb950";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x + 5, y + 5, 10, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
+  }
+
+  // Accuracy readout
+  if (t > 0.8) {
+    ctx.fillStyle = "#3fb950";
+    ctx.font = "14px ui-monospace, monospace";
+    ctx.fillText(`accuracy: ${(data.accuracy * 100).toFixed(1)}%  baseline: ${(data.baseline_accuracy * 100).toFixed(1)}%`, pad, H - 20);
+  }
 }
 
 // ---- animation player wiring ----
