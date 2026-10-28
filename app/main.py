@@ -31,6 +31,7 @@ from app.solvers.electrolyte import screen_electrolytes, compute_homo_lumo
 from app.solvers.drugs import compute_binding, screen_ligand, screen_library, LIGANDS, RECEPTORS
 from app.solvers.carbon import screen_mofs, compute_adsorption, MOFS
 from app.solvers.portfolio import optimize_portfolio, list_stocks, STOCKS
+from app.solvers.qml import classify, list_datasets
 from app.intents import parse_intent
 from app.scenarios import list_scenarios, get_scenario
 from app.jobs import spawn_job
@@ -465,6 +466,15 @@ def dispatch(system_type, params):
 
     if system_type == "stocks":
         return list_stocks()
+
+    if system_type == "qml":
+        dataset = params.get("dataset", "iris")
+        n_qubits = int(params.get("n_qubits", 4))
+        test_frac = float(params.get("test_frac", 0.3))
+        return classify(dataset=dataset, n_qubits=n_qubits, test_frac=test_frac)
+
+    if system_type == "datasets":
+        return list_datasets()
 
     raise ValueError(f"unknown system_type: {system_type}")
 
