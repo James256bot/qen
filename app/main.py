@@ -27,6 +27,7 @@ from app.solvers.lattice2d import solve_lattice2d
 from app.solvers.vmc import vmc_hubbard, exact_hubbard_ground_energy
 from app.solvers.dft import solve_dft_1d
 from app.solvers.shor import shor
+from app.solvers.electrolyte import screen_electrolytes, compute_homo_lumo
 from app.intents import parse_intent
 from app.scenarios import list_scenarios, get_scenario
 from app.jobs import spawn_job
@@ -423,6 +424,13 @@ def dispatch(system_type, params):
         if not (2 <= N <= 1000):
             raise ValueError("N must be between 2 and 1000")
         return shor(N)
+
+    if system_type == "electrolyte":
+        if "candidates" in params:
+            return screen_electrolytes(candidates=params["candidates"])
+        if "name" in params:
+            return compute_homo_lumo(params["name"])
+        return screen_electrolytes()
 
     raise ValueError(f"unknown system_type: {system_type}")
 
