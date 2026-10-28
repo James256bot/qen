@@ -110,6 +110,15 @@
       </div>
     </div>
     </div>
+  
+    <div style="margin-top:12px; padding-top:12px; border-top:1px solid #21262d;">
+      <div style="font-size:12px; color:#8b949e; margin-bottom:8px;">session</div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <button id="saveSessionBtn" style="width:auto; padding:6px 10px; font-size:11px; background:#21262d;">save</button>
+        <button id="loadSessionBtn" style="width:auto; padding:6px 10px; font-size:11px; background:#21262d;">load</button>
+        <button id="shareSessionBtn" style="width:auto; padding:6px 10px; font-size:11px; background:#1f6feb;">copy session link</button>
+      </div>
+    </div>
   </div>
 
   <!-- scenario step navigation -->
@@ -2763,6 +2772,158 @@ function playSweep() {
   }, 1000 / fps);
 }
 
+
+// ============================================================
+// Session save/load — MINIMAL version, no init changes
+// ============================================================
+
+const SESSION_VERSION = 1;
+const STORAGE_PREFIX = "qen_session_";
+
+function getCurrentSession() {
+  const sys = $sys.value;
+  const params = (typeof collectParams === "function") ? collectParams() : {};
+  const sweepToggle = document.getElementById("sweepToggle");
+  const compareToggle = document.getElementById("compareToggle");
+  
+  const session = {
+    version: SESSION_VERSION,
+    created_at: new Date().toISOString(),
+    system: sys,
+    parameters: params,
+    sweep: (sweepToggle && sweepToggle.checked) ? {
+      enabled: true,
+      parameter: document.getElementById("sweepParam").value,
+      from: parseFloat(document.getElementById("sweepFrom").value),
+      to: parseFloat(document.getElementById("sweepTo").value),
+      steps: parseInt(document.getElementById("sweepSteps").value, 10),
+    } : { enabled: false },
+    compare: (compareToggle && compareToggle.checked) ? {
+      enabled: true,
+      solver: document.getElementById("compareSolver").value,
+      params_json: document.getElementById("compareParams").value,
+    } : { enabled: false },
+  };
+  return session;
+}
+
+function saveSessionToLocal() {
+  try {
+    const session = getCurrentSession();
+    const key = STORAGE_PREFIX + Date.now();
+    localStorage.setItem(key, JSON.stringify(session));
+    $meta.textContent = "session saved: " + session.system + " (" + Object.keys(session.parameters).length + " params)";
+  } catch (e) {
+    $err.textContent = "save failed: " + e.message;
+  }
+}
+
+function loadSessionFromLocal() {
+  try {
+    // Find the most recent session
+    let latestKey = null;
+    let latestTime = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(STORAGE_PREFIX)) {
+        const t = parseInt(k.replace(STORAGE_PREFIX, ""), 10);
+        if (t > latestTime) { latestTime = t; latestKey = k; }
+      }
+    }
+    if (!latestKey) {
+      $err.textContent = "no saved sessions found";
+      return;
+    }
+    const session = JSON.parse(localStorage.getItem(latestKey));
+    applySession(session);
+    $meta.textContent = "loaded session: " + session.system;
+  } catch (e) {
+    $err.textContent = "load failed: " + e.message;
+  }
+}
+
+function applySession(session) {
+  if (!session || session.version !== SESSION_VERSION) {
+    throw new Error("unsupported session version");
+  }
+  // Set system
+  if (session.system && PARAMS[session.system]) {
+    $sys.value = session.system;
+    renderParams();
+    for (const [k, v] of Object.entries(session.parameters || {})) {
+      const el = document.getElementById(`p_${k}`);
+      if (el) el.value = v;
+    }
+  }
+  // Restore sweep
+  const st = document.getElementById("sweepToggle");
+  const sp = document.getElementById("sweepPanel");
+  if (st && sp) {
+    if (session.sweep && session.sweep.enabled) {
+      st.checked = true;
+      sp.style.display = "block";
+      if (typeof populateSweepParams === "function") populateSweepParams();
+      const sp1 = document.getElementById("sweepParam");
+      if (sp1) sp1.value = session.sweep.parameter;
+      const sp2 = document.getElementById("sweepFrom");
+      if (sp2) sp2.value = session.sweep.from;
+      const sp3 = document.getElementById("sweepTo");
+      if (sp3) sp3.value = session.sweep.to;
+      const sp4 = document.getElementById("sweepSteps");
+      if (sp4) sp4.value = session.sweep.steps;
+    } else {
+      st.checked = false;
+      sp.style.display = "none";
+    }
+  }
+  // Restore compare
+  const ct = document.getElementById("compareToggle");
+  const cp = document.getElementById("comparePanel");
+  if (ct && cp) {
+    if (session.compare && session.compare.enabled) {
+      ct.checked = true;
+      cp.style.display = "block";
+      const cs = document.getElementById("compareSolver");
+      if (cs) cs.value = session.compare.solver;
+      const cpi = document.getElementById("compareParams");
+      if (cpi) cpi.value = session.compare.params_json || "";
+    } else {
+      ct.checked = false;
+      cp.style.display = "none";
+    }
+  }
+  // Re-run the current simulation
+  if (typeof runSim === "function") runSim();
+}
+
+async function shareSession() {
+  try {
+    const session = getCurrentSession();
+    const json = JSON.stringify(session);
+    const encoded = btoa(unescape(encodeURIComponent(json)));
+    const url = `${location.origin}/studio?session=${encoded}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      $meta.textContent = "session link copied to clipboard";
+    } catch (e) {
+      $meta.textContent = "session link (too long to display inline)";
+      $raw.textContent = JSON.stringify({ session_url: url }, null, 2);
+    }
+  } catch (e) {
+    $err.textContent = "share failed: " + e.message;
+  }
+}
+
+// Wire buttons — done after a short delay to ensure DOM is ready
+setTimeout(() => {
+  const $save = document.getElementById("saveSessionBtn");
+  const $load = document.getElementById("loadSessionBtn");
+  const $share = document.getElementById("shareSessionBtn");
+  if ($save) $save.addEventListener("click", saveSessionToLocal);
+  if ($load) $load.addEventListener("click", loadSessionFromLocal);
+  if ($share) $share.addEventListener("click", shareSession);
+}, 500);
+
 // ---- animation player wiring ----
 (function() {
   const $play = document.getElementById("playBtn");
@@ -2837,6 +2998,19 @@ $run.addEventListener("click", runSim);
   if (scenarioId) {
     await runScenario(scenarioId);
     return;
+  }
+
+  // Priority 1b: ?session=<base64>
+  const sessionParam = q.get("session");
+  if (sessionParam) {
+    try {
+      const decoded = decodeURIComponent(escape(atob(sessionParam)));
+      const session = JSON.parse(decoded);
+      applySession(session);
+      return;
+    } catch (e) {
+      console.warn("session decode failed:", e);
+    }
   }
 
   // Priority 2: ?ask=<prompt> -- run the intent parser
