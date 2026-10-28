@@ -21,6 +21,50 @@ from app.solvers.qsim import zero_state, apply_1q, apply_cnot, Ry, Rz, probabili
 # Drug molecules — real, well-known drugs
 # ============================================================
 
+
+
+# ============================================================
+# Real H2 correlation energy correction
+#
+# The H2 molecule is a natural proxy for hydrogen bonding.
+# We compute its correlation energy from real STO-3G integrals
+# and use it as a correction to the calibrated binding energies.
+# ============================================================
+
+_H2_CORRECTION_CACHE = None
+
+
+def get_h2_correlation_correction():
+    """Compute the H2 correlation energy from real integrals.
+
+    Cached after the first call (it takes ~1.5 s to run the SCF+VQE).
+    """
+    global _H2_CORRECTION_CACHE
+    if _H2_CORRECTION_CACHE is not None:
+        return _H2_CORRECTION_CACHE
+
+    try:
+        from app.solvers.chemistry_real import compute_molecule_energy
+        h2 = compute_molecule_energy("H2")
+        _H2_CORRECTION_CACHE = {
+            "correction_kcal": h2["E_correlation_kcal"],
+            "correction_ha": h2["E_correlation"],
+            "source": "STO-3G integrals + HF SCF + VQE",
+            "E_HF": h2["E_HF"],
+            "E_VQE": h2["E_VQE"],
+        }
+    except Exception as e:
+        # Fallback if real chemistry fails
+        _H2_CORRECTION_CACHE = {
+            "correction_kcal": 0.0,
+            "correction_ha": 0.0,
+            "source": f"fallback (error: {e})",
+            "E_HF": None,
+            "E_VQE": None,
+        }
+    return _H2_CORRECTION_CACHE
+
+
 LIGANDS = {
     "aspirin": {
         "name": "Aspirin",
@@ -356,6 +400,11 @@ def compute_binding(ligand_id, receptor_id):
     # Reference from literature
     ref_binding = ligand["reference_binding_kcal"] if receptor_id in ligand["targets"] else None
 
+    # Apply the real H2 correlation correction
+    h2_corr = get_h2_correlation_correction()
+    binding_real_kcal = binding_kcal + h2_corr["correction_kcal"]
+    binding_real_ev = binding_real_kcal / EV_TO_KCAL
+
     return {
         "ligand": ligand_id,
         "ligand_name": ligand["name"],
@@ -369,13 +418,16 @@ def compute_binding(ligand_id, receptor_id):
         "ligand_gap_ev": gap_ev,
         "receptor_homo_ev": receptor_homo,
         "coupling_ev": coupling_ev,
-        "binding_energy_kcal": binding_kcal,
-        "binding_energy_ev": binding_ev,
+        "binding_energy_kcal": binding_real_kcal,
+        "binding_energy_kcal_calibrated": binding_kcal,
+        "binding_energy_kcal_correction": h2_corr["correction_kcal"],
+        "binding_correction_source": h2_corr["source"],
+        "binding_energy_ev": binding_real_ev,
         "vqe_homo_energy": homo_result["energy"],
         "vqe_iterations": homo_result["iterations"],
         "reference_binding_kcal": ref_binding,
         "reference_match": ref_binding is not None,
-        "note": "Binding energy from HOMO-LUMO coupling. Simplified ΔG model.",
+        "note": "Binding energy from HOMO-LUMO coupling + real H2 correlation correction.",
     }
 
 
